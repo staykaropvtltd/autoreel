@@ -1,7 +1,12 @@
 # ---------- Environment ----------
 .env
-.env.local
+.env.*
 *.env
+*.env.*
+!.env.example
+!*.env.example
+.DS_Store
+*.log
 
 # ---------- Python ----------
 __pycache__/
@@ -52,6 +57,7 @@ $RECYCLE.BIN/
 # Keep placeholder assets tracked even though media extensions are ignored above
 !assets/**/*.mp3
 !assets/**/*.mp4
+!frontend/public/**/*.mp4
 
 # ---------- Storage (runtime data, not source) ----------
 storage/uploads/*

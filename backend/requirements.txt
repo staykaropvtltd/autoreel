@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+pytest
+httpx
+opencv-python-headless
+scenedetect
+numpy
+python-multipart
