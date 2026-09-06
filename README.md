@@ -6,6 +6,54 @@
 
 ---
 
+## 🚀 Quick Start Guide
+
+You can run this project locally immediately after cloning or extracting the downloaded zip. **No `.env` file or external API keys are required to run the core app!** Default settings and offline demo authentication work out of the box.
+
+### Prerequisites
+- **[Node.js](https://nodejs.org/)** (v18 or higher)
+- **[Python](https://www.python.org/)** (v3.10 or higher)
+- **[FFmpeg](https://ffmpeg.org/download.html)** installed and added to your system `PATH` (required for video processing)
+
+---
+
+### Step 1: Start Backend (FastAPI)
+Open a terminal in the project folder:
+```bash
+cd backend
+python -m venv .venv
+
+# On Windows (PowerShell):
+.\.venv\Scripts\activate
+
+# On macOS/Linux:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+Backend API will start at `http://127.0.0.1:8000`.
+
+---
+
+### Step 2: Start Frontend (React + Vite)
+Open a **second terminal** in the project folder:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Frontend will start at `http://localhost:5173`. Open this URL in your browser!
+
+---
+
+### 💡 Environment Variables (`.env`)
+- **Backend**: Pre-configured with sensible defaults (`BACKEND_PORT=8000`, `FRONTEND_URL=http://localhost:5173`). No `.env` is needed to run.
+- **Frontend**: Real Google OAuth is optional (`VITE_GOOGLE_CLIENT_ID`). If no `.env` is provided, clicking "Continue with Google" or entering any email/password logs in via **Local Demo Mode** seamlessly.
+- If you wish to customize ports or configure Google Cloud OAuth, simply copy `.env.example` to `.env` in the respective folders.
+
+---
+
 ## 1. Project Overview
 
 Kaladhar Auto-Reel is an AI-assisted video automation platform designed for Kaladhar Heirlooms.
