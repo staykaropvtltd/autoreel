@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Sparkles, CheckCircle2, XCircle, ShieldCheck, Maximize2, Layers, Smartphone, Eye } from "lucide-react";
+import { CheckCircle2, XCircle, ShieldCheck, Maximize2, Layers, Smartphone, Eye } from "lucide-react";
 
 export default function Features03() {
   const [activeTab, setActiveTab] = useState<"all" | "quality" | "framing" | "branding">("all");
@@ -12,7 +12,7 @@ export default function Features03() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-4 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#16161F] border border-[#D4AF37]/30 text-xs font-semibold uppercase tracking-wider text-[#F3C766]">
-              <Sparkles className="w-3.5 h-3.5" />
+              <Layers className="w-3.5 h-3.5" />
               <span>Intelligent Video Pipeline</span>
             </div>
             <h2 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-[#FAF7F2] leading-tight">

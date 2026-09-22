@@ -8,6 +8,7 @@ import pytest
 from app.schemas.reel import PlannedClip
 from app.schemas.story import (
     BrandingConfig,
+    MusicSelection,
     OverlayConfig,
     PlannedReelClip,
     ProductOverlayInfo,
@@ -21,6 +22,7 @@ from app.services.reel_editor_renderer import (
     build_timed_overlay_filter,
     compose_reel_from_editor_plan,
     compute_timeline_plan,
+    render_final_overlay,
     resolve_overlay_windows,
 )
 
@@ -645,3 +647,70 @@ def test_compose_reel_with_bumpers_intro_and_outro_frames_show_branding(tmp_path
     # The mid-content frame (busy test pattern) must look distinctly
     # different from the flat bumper background.
     assert not all(abs(c - i) < 40 for c, i in zip(ivory_bgr, content_mean))
+
+
+# --- audio trimming with custom start_time ---
+
+
+def test_render_final_overlay_custom_audio_start_time(tmp_path: Path):
+    """render_final_overlay must use music.start_time (not hardcoded 0)
+    in the FFmpeg atrim filter so the generated video starts at the
+    exact audio hook the user selected."""
+    from unittest.mock import patch
+
+    # Create a dummy intermediate video (we mock FFmpeg so it's not actually read)
+    intermediate = tmp_path / "intermediate.mp4"
+    intermediate.write_bytes(b"\x00" * 100)
+
+    output = tmp_path / "output.mp4"
+
+    music = MusicSelection(
+        track_id="ghoomar",
+        track_name="Ghoomar",
+        source_path="ghoomar.mp3",
+        source_duration=180.0,
+        start_time=20.0,  # <-- user wants the audio starting at second 20
+        end_time=35.0,
+        volume=0.85,
+        loop_if_needed=True,
+        preserve_original_audio=False,
+    )
+
+    music_file = tmp_path / "ghoomar.mp3"
+    music_file.write_bytes(b"\x00" * 100)
+
+    captured_args: list[list[str]] = []
+
+    def mock_run_ffmpeg(args: list[str]) -> None:
+        captured_args.append(args)
+
+    with patch(
+        "app.services.reel_editor_renderer.run_ffmpeg", side_effect=mock_run_ffmpeg
+    ):
+        render_final_overlay(
+            intermediate_path=intermediate,
+            output_path=output,
+            overlay_filter=None,
+            logo_path=None,
+            logo_windows=[],
+            target_duration=15.0,
+            music=music,
+            music_file_path=music_file,
+        )
+
+    assert len(captured_args) == 1
+    ffmpeg_args = captured_args[0]
+
+    # Find the -filter_complex value
+    fc_idx = ffmpeg_args.index("-filter_complex")
+    filter_complex = ffmpeg_args[fc_idx + 1]
+
+    # The atrim must use start=20.0 and end=35.0 (not atrim=0:15.000)
+    assert "atrim=20.000:35.000" in filter_complex, (
+        f"Expected atrim=20.000:35.000 in filter_complex, got: {filter_complex}"
+    )
+    # asetpts=PTS-STARTPTS must be present to reset timestamps after trim
+    assert "asetpts=PTS-STARTPTS" in filter_complex, (
+        f"Expected asetpts=PTS-STARTPTS in filter_complex, got: {filter_complex}"
+    )
+

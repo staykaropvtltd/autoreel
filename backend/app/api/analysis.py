@@ -15,6 +15,7 @@ router = APIRouter()
 class AnalyzeRequest(BaseModel):
     job_id: str | None = None
     use_demo: bool = False
+    template_id: str | None = None
 
 
 def _run_analysis_job(job_id: str, video_paths: list[Path]) -> None:
@@ -61,8 +62,22 @@ def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -
         raise HTTPException(status_code=400, detail="No videos to analyze")
 
     analysis_job_id = str(uuid.uuid4())
-    create_analysis_job(analysis_job_id, source_dir=source_dir)
-    background_tasks.add_task(_run_analysis_job, analysis_job_id, video_paths)
+
+    create_analysis_job(
+    analysis_job_id,
+    source_dir=source_dir,
+)
+
+    update_analysis_job(
+    analysis_job_id,
+    template_id=request.template_id,
+)
+
+    background_tasks.add_task(
+    _run_analysis_job,
+    analysis_job_id,
+    video_paths,
+)
 
     return {"job_id": analysis_job_id, "status": "queued"}
 
@@ -96,4 +111,5 @@ def get_analysis(job_id: str) -> dict:
         "final_selected_count": batch_result.final_selected_count,
         "processing_time_seconds": total_processing_time,
         "clips": [c.model_dump() for c in batch_result.all_clips],
+        "template_id": job.get("template_id"),
     }

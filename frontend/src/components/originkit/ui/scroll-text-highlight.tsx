@@ -46,7 +46,7 @@ const Word = ({
 export default function ScrollHighlight({
   text = "Ethnic fashion moves at the speed of social commerce. From handwoven Banarasi silks to bespoke bridal lehengas, Kaladhar Auto-Reel curates, reframes, and brands your raw photoshoot footage into ready-to-publish vertical Reels in minutes.",
   font = {
-    fontFamily: '"Playfair Display", Georgia, serif',
+    fontFamily: '"Space Grotesk", "Sora", sans-serif',
     fontSize: "clamp(26px, 3.8vw, 46px)",
     fontWeight: 700,
     lineHeight: "1.32",

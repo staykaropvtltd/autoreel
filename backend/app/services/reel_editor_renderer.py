@@ -11,10 +11,16 @@ can't express. Nothing in reel_composer.py's existing functions is
 rewritten - only reused.
 """
 
+from itertools import product
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+from app.services.product_end_card import (
+    build_product_end_card_video,
+    create_product_end_card,
+)
 
 from app.schemas.reel import PlannedClip, ReelResult
 from app.schemas.story import (
@@ -29,7 +35,11 @@ from app.schemas.story import (
 from app.schemas.video import VideoMetadata
 from app.services.ffmpeg_service import run_ffmpeg
 from app.services.music_service import get_track_duration
-from app.services.brand_service import get_brand_config, get_brand_logo_path
+from app.services.brand_service import (
+    get_brand_config,
+    get_brand_logo_path,
+    get_logo_placement,
+)
 from app.services.reel_bumpers import build_bumper_clip
 from app.services.reel_composer import (
     DEFAULT_FPS,
@@ -62,6 +72,7 @@ SAFE_MARGIN_TOP = 140
 SAFE_MARGIN_BOTTOM = 220
 SAFE_MARGIN_SIDES = 60
 LINE_HEIGHT = 56
+END_CARD_DURATION = 5.0
 
 # accent_color only applies to "price" (a small highlight, per spec section
 # 11) - every other role uses the configured text_color.
@@ -205,6 +216,12 @@ def resolve_overlay_windows(
             # A dedicated detail-clip callout can also carry the category
             # (spec section 15's DETAIL example: material / color / category).
             add(material_window, product.category, "detail_secondary")
+        # Product code
+        if product.product_code:
+            add(end_window, f"Code: {product.product_code}", "detail_secondary")
+
+
+            
 
     if product.price and overlays.price_placement != "none":
         price_window = None
@@ -269,11 +286,525 @@ MUSIC_FADE_SECONDS = 0.75
 # Logo sits just inside the frame edge, clear of where stacked text starts
 # (SAFE_MARGIN_TOP / SAFE_MARGIN_BOTTOM) so the two never overlap.
 _LOGO_POSITION_EXPR = {
-    "top_left": (str(SAFE_MARGIN_SIDES), "30"),
-    "top_right": (f"W-w-{SAFE_MARGIN_SIDES}", "30"),
-    "bottom_left": (str(SAFE_MARGIN_SIDES), "H-h-30"),
-    "bottom_right": (f"W-w-{SAFE_MARGIN_SIDES}", "H-h-30"),
+    "top_left": (str(SAFE_MARGIN_SIDES), "40"),
+    "top-left": (str(SAFE_MARGIN_SIDES), "40"),
+    "top": ("(W-w)/2", "40"),
+    "top_center": ("(W-w)/2", "40"),
+    "top_right": (f"W-w-{SAFE_MARGIN_SIDES}", "40"),
+    "top-right": (f"W-w-{SAFE_MARGIN_SIDES}", "40"),
+    "left": (str(SAFE_MARGIN_SIDES), "(H-h)/2"),
+    "center": ("(W-w)/2", "(H-h)/2"),
+    "right": (f"W-w-{SAFE_MARGIN_SIDES}", "(H-h)/2"),
+    "bottom_left": (str(SAFE_MARGIN_SIDES), "H-h-80"),
+    "bottom-left": (str(SAFE_MARGIN_SIDES), "H-h-80"),
+    "bottom": ("(W-w)/2", "H-h-80"),
+    "down": ("(W-w)/2", "H-h-80"),
+    "bottom_center": ("(W-w)/2", "H-h-80"),
+    "bottom_right": (f"W-w-{SAFE_MARGIN_SIDES}", "H-h-80"),
+    "bottom-right": (f"W-w-{SAFE_MARGIN_SIDES}", "H-h-80"),
 }
+
+# ===============================================================
+# PRODUCT END CARD
+# ===============================================================
+
+END_CARD_DURATION = 5.0
+END_CARD_BG = "#FBF6EE"
+END_CARD_PRIMARY = "#7A2E18"
+END_CARD_SECONDARY = "#B76E3C"
+END_CARD_SOFT = "#F3E2CF"
+END_CARD_TEXT = "#3B2118"
+
+
+def _end_card_font(size: int, bold: bool = False):
+    candidates = []
+
+    if bold:
+        candidates.extend([
+            "C:/Windows/Fonts/georgiab.ttf",
+            "C:/Windows/Fonts/segoeuib.ttf",
+        ])
+    else:
+        candidates.extend([
+            "C:/Windows/Fonts/georgia.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+        ])
+
+    candidates.append(_default_font_file())
+
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return ImageFont.truetype(candidate, size=size)
+
+    return ImageFont.load_default()
+
+
+def _format_price(value: str) -> str:
+    value = str(value or "").strip()
+
+    if not value:
+        return ""
+
+    if "₹" in value:
+        return value
+
+    try:
+        number = float(value.replace(",", "").replace("Rs.", "").replace("Rs", "").strip())
+
+        if number.is_integer():
+            return f"₹{int(number):,}"
+
+        return f"₹{number:,.2f}"
+    except ValueError:
+        return value
+
+
+def _draw_leaf(draw, x: int, y: int, scale: float = 1.0):
+    """
+    Small decorative botanical element inspired by the reference design.
+    """
+    color = END_CARD_SECONDARY
+
+    draw.line(
+        [
+            (x, y + int(90 * scale)),
+            (x + int(35 * scale), y + int(45 * scale)),
+            (x + int(80 * scale), y),
+        ],
+        fill=color,
+        width=max(2, int(3 * scale)),
+    )
+
+    leaf_points = [
+        (
+            x + int(20 * scale),
+            y + int(60 * scale),
+        ),
+        (
+            x + int(5 * scale),
+            y + int(20 * scale),
+        ),
+        (
+            x + int(50 * scale),
+            y + int(40 * scale),
+        ),
+    ]
+
+    draw.polygon(
+        leaf_points,
+        outline=color,
+    )
+
+    draw.line(
+        [
+            (x + int(35 * scale), y + int(45 * scale)),
+            (x + int(10 * scale), y + int(25 * scale)),
+        ],
+        fill=color,
+        width=max(1, int(2 * scale)),
+    )
+
+
+def _draw_decorative_corner(draw, x: int, y: int, scale: float = 1.0):
+    color = END_CARD_SECONDARY
+
+    size = int(24 * scale)
+
+    draw.line(
+        [(x - size, y), (x + size, y)],
+        fill=color,
+        width=max(1, int(2 * scale)),
+    )
+
+    draw.line(
+        [(x, y - size), (x, y + size)],
+        fill=color,
+        width=max(1, int(2 * scale)),
+    )
+
+    draw.ellipse(
+        [
+            x - int(8 * scale),
+            y - int(8 * scale),
+            x + int(8 * scale),
+            y + int(8 * scale),
+        ],
+        outline=color,
+        width=max(1, int(2 * scale)),
+    )
+
+
+def _draw_centered_text(
+    draw,
+    text,
+    y,
+    font,
+    fill,
+    width=1080,
+):
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+
+    x = (width - text_width) // 2
+
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=fill,
+    )
+
+    return bbox[3] - bbox[1]
+
+
+def create_product_end_card(
+    output_path: Path,
+    product: ProductOverlayInfo,
+    brand_config,
+    logo_path: Path | None,
+    width: int = DEFAULT_TARGET_WIDTH,
+    height: int = DEFAULT_TARGET_HEIGHT,
+    shop_name: str | None = None,
+) -> Path:
+    """
+    Creates a premium vertical product information card.
+
+    Product information is rendered dynamically from ProductOverlayInfo.
+    """
+
+    image = Image.new(
+        "RGB",
+        (width, height),
+        END_CARD_BG,
+    )
+
+    draw = ImageDraw.Draw(image)
+
+    # -----------------------------------------------------------
+    # Fonts
+    # -----------------------------------------------------------
+
+    logo_title_font = _end_card_font(62, bold=False)
+    product_title_font = _end_card_font(74, bold=True)
+    tagline_font = _end_card_font(25)
+
+    label_font = _end_card_font(27)
+    value_font = _end_card_font(36, bold=True)
+    price_font = _end_card_font(52, bold=True)
+    cta_font = _end_card_font(30)
+
+    center_x = width // 2
+
+    # -----------------------------------------------------------
+    # Soft bottom fabric-like waves
+    # -----------------------------------------------------------
+
+    for offset in range(0, 260, 20):
+        y = height - 250 + offset
+
+        draw.arc(
+            [
+                -300 + offset,
+                y - 180,
+                width + 300 - offset,
+                y + 180,
+            ],
+            180,
+            360,
+            fill="#F4DFCA",
+            width=10,
+        )
+
+    # -----------------------------------------------------------
+    # Decorative elements
+    # -----------------------------------------------------------
+
+    _draw_leaf(draw, 25, 55, 1.5)
+    _draw_leaf(draw, width - 110, height - 430, 1.4)
+
+    _draw_decorative_corner(
+        draw,
+        width - 115,
+        110,
+        1.0,
+    )
+
+    _draw_decorative_corner(
+        draw,
+        90,
+        height - 170,
+        0.8,
+    )
+
+    # -----------------------------------------------------------
+    # Logo
+    # -----------------------------------------------------------
+
+    current_y = 125
+
+    if logo_path is not None and logo_path.exists():
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+
+            max_logo_width = 260
+            max_logo_height = 230
+
+            logo.thumbnail(
+                (max_logo_width, max_logo_height),
+                Image.Resampling.LANCZOS,
+            )
+
+            logo_x = (width - logo.width) // 2
+
+            image.paste(
+                logo,
+                (logo_x, current_y),
+                logo,
+            )
+
+            current_y += logo.height + 35
+
+        except Exception:
+            pass
+
+    # -----------------------------------------------------------
+    # Brand / Shop Name
+    # -----------------------------------------------------------
+
+    # IMPORTANT:
+    # Use the shop_name passed from the ReelPlan first.
+    # This prevents the hardcoded central brand name from overriding
+    # the user's entered brand name.
+    brand_name = (
+        shop_name
+        or getattr(brand_config, "name", None)
+        or "Your Brand"
+    )
+
+    _draw_centered_text(
+        draw,
+        str(brand_name),
+        current_y,
+        logo_title_font,
+        END_CARD_PRIMARY,
+        width,
+    )
+
+    current_y += 110
+
+    # -----------------------------------------------------------
+    # Product Name
+    # -----------------------------------------------------------
+
+    product_name = (
+        product.product_name
+        or product.category
+        or "Product"
+    )
+
+    _draw_centered_text(
+        draw,
+        str(product_name),
+        current_y,
+        product_title_font,
+        "#4A2014",
+        width,
+    )
+
+    current_y += 115
+
+    # -----------------------------------------------------------
+    # Divider
+    # -----------------------------------------------------------
+
+    draw.line(
+        [
+            (width // 2 - 110, current_y),
+            (width // 2 + 110, current_y),
+        ],
+        fill=END_CARD_SECONDARY,
+        width=2,
+    )
+
+    current_y += 65
+
+    # -----------------------------------------------------------
+    # Product Details
+    # -----------------------------------------------------------
+
+    details = [
+        ("Category", product.category),
+        ("Material", product.material),
+        ("Color", product.color),
+        ("Code", product.product_code),
+        ("Price", _format_price(product.price)),
+    ]
+
+    details = [
+        (label, value)
+        for label, value in details
+        if value
+    ]
+
+    row_height = 108
+    left_x = 265
+    value_x = 455
+
+    for index, (label, value) in enumerate(details):
+
+        row_y = current_y + index * row_height
+
+        # Soft circle
+        circle_radius = 34
+        circle_x = 180
+        circle_y = row_y + 25
+
+        draw.ellipse(
+            [
+                circle_x - circle_radius,
+                circle_y - circle_radius,
+                circle_x + circle_radius,
+                circle_y + circle_radius,
+            ],
+            fill=END_CARD_SOFT,
+        )
+
+        # Small center mark
+        draw.ellipse(
+            [
+                circle_x - 7,
+                circle_y - 7,
+                circle_x + 7,
+                circle_y + 7,
+            ],
+            fill=END_CARD_SECONDARY,
+        )
+
+        # Label
+        draw.text(
+            (left_x, row_y - 5),
+            label,
+            font=label_font,
+            fill=END_CARD_SECONDARY,
+        )
+
+        # Value
+        draw.text(
+            (value_x, row_y + 25),
+            str(value),
+            font=price_font if label == "Price" else value_font,
+            fill=END_CARD_TEXT,
+        )
+
+    current_y += len(details) * row_height + 30
+
+    # -----------------------------------------------------------
+    # CTA
+    # -----------------------------------------------------------
+
+    cta_width = 420
+    cta_height = 76
+
+    cta_x = (width - cta_width) // 2
+    cta_y = min(current_y, height - 210)
+
+    draw.rounded_rectangle(
+        [
+            cta_x,
+            cta_y,
+            cta_x + cta_width,
+            cta_y + cta_height,
+        ],
+        radius=38,
+        fill="#F5E3D0",
+        outline="#D9A879",
+        width=2,
+    )
+
+    _draw_centered_text(
+        draw,
+        "Wear Your Story",
+        cta_y + 20,
+        cta_font,
+        END_CARD_PRIMARY,
+        width,
+    )
+
+    # -----------------------------------------------------------
+    # Save
+    # -----------------------------------------------------------
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    image.save(
+        output_path,
+        format="PNG",
+    )
+
+    return output_path
+
+def build_product_end_card_video(
+    image_path: Path,
+    output_path: Path,
+    duration: float = END_CARD_DURATION,
+    width: int = DEFAULT_TARGET_WIDTH,
+    height: int = DEFAULT_TARGET_HEIGHT,
+    fps: int = DEFAULT_FPS,
+) -> Path:
+
+    args = [
+        "-loop",
+        "1",
+        "-framerate",
+        str(fps),
+        "-i",
+        str(image_path),
+
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=44100",
+
+        "-t",
+        str(duration),
+
+        "-vf",
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        "format=yuv420p",
+
+        "-r",
+        str(fps),
+
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+
+        "-c:a",
+        "aac",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-b:a",
+        "128k",
+
+        "-shortest",
+        "-movflags",
+        "+faststart",
+
+        str(output_path),
+    ]
+
+    run_ffmpeg(args)
+
+    return output_path
 
 
 def render_final_overlay(
@@ -285,88 +816,191 @@ def render_final_overlay(
     target_duration: float,
     music: MusicSelection | None = None,
     music_file_path: Path | None = None,
+    template_image_path: Path | None = None,
+    target_width: int = DEFAULT_TARGET_WIDTH,
+    target_height: int = DEFAULT_TARGET_HEIGHT,
     logo_size: int = 120,
     logo_position: str = "top_left",
 ) -> None:
-    """Phase 9: if `music` is given, it becomes the primary background
-    audio - fitted to exactly `target_duration` (segment start/end, looped
-    if the chosen segment is shorter than the Reel, faded in/out within the
-    Reel's own duration - never extending it), optionally mixed quietly
-    with the original clip audio. Without music, falls back to Phase 8's
-    plain pass-through of the intermediate file's own audio.
+    """Phase 9 final overlay pass.
+
+    Applies the optional template image, logo, timed text overlays and music
+    to the concatenated intermediate Reel.
     """
     args = ["-i", str(intermediate_path)]
     next_input_index = 1
     music_index = None
     logo_index = None
+    template_index = None
 
+    # ---------------------------------------------------------------
+    # MUSIC INPUT
+    # ---------------------------------------------------------------
     if music is not None and music_file_path is not None:
-        segment_duration = (music.end_time if music.end_time is not None else music.source_duration) - music.start_time
+        segment_duration = (
+            (music.end_time if music.end_time is not None else music.source_duration)
+            - music.start_time
+        )
+
         if segment_duration + 0.05 < target_duration and music.loop_if_needed:
             args += ["-stream_loop", "-1"]
-        args += ["-ss", str(music.start_time), "-i", str(music_file_path)]
+
+        args += [
+            "-ss",
+            str(music.start_time),
+            "-i",
+            str(music_file_path),
+        ]
+
         music_index = next_input_index
         next_input_index += 1
 
-    if logo_path and logo_windows:
-        args += ["-i", str(logo_path)]
-        logo_index = next_input_index
-        next_input_index += 1
+    # ---------------------------------------------------------------
+    # BRAND LOGO INPUT
+    # ---------------------------------------------------------------
+    # A still image normally provides only one frame to FFmpeg.
+    # Looping it makes it available for the complete Reel duration,
+    # which is required for the "entire" logo placement option.
+    if logo_path is not None:
+        logo_path = Path(logo_path)
+
+        if logo_path.exists():
+            args += [
+                "-loop",
+                "1",
+                "-framerate",
+                str(DEFAULT_FPS),
+                "-i",
+                str(logo_path),
+            ]
+
+            logo_index = next_input_index
+            next_input_index += 1
+
+    # ---------------------------------------------------------------
+    # TEMPLATE IMAGE INPUT
+    # ---------------------------------------------------------------
+    if template_image_path is not None:
+        template_image_path = Path(template_image_path)
+
+        if template_image_path.exists():
+            args += [
+                "-loop",
+                "1",
+                "-framerate",
+                str(DEFAULT_FPS),
+                "-i",
+                str(template_image_path),
+            ]
+
+            template_index = next_input_index
+            next_input_index += 1
 
     filter_parts = []
     video_label = "0:v"
 
-    if logo_index is not None:
-        enable_expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in logo_windows)
-        x_expr, y_expr = _LOGO_POSITION_EXPR.get(logo_position, _LOGO_POSITION_EXPR["top_left"])
-        # Scale to logo_size width (never render the logo at its native
-        # resolution - a large title-card-sized logo would dominate the
-        # product visual, per spec section 9/10).
-        filter_parts.append(f"[{logo_index}:v]scale={logo_size}:-1[logoscaled]")
-        filter_parts.append(
-            f"[{video_label}][logoscaled]overlay=x={x_expr}:y={y_expr}:enable='{enable_expr}'[vlogo]"
+    
+
+    if logo_index is not None and logo_windows:
+        x_expr, y_expr = _LOGO_POSITION_EXPR.get(
+            logo_position,
+            _LOGO_POSITION_EXPR["top_left"],
         )
+
+        filter_parts.append(
+            f"[{logo_index}:v]"
+            f"scale={logo_size}:-1,"
+            f"format=rgba"
+            f"[logoscaled]"
+        )
+
+        # Build the visibility expression.
+        enable_expr = "+".join(
+            f"between(t,{start:.3f},{end:.3f})"
+            for start, end in logo_windows
+        )
+
+        filter_parts.append(
+            f"[{video_label}][logoscaled]"
+            f"overlay="
+            f"x={x_expr}:"
+            f"y={y_expr}:"
+            f"enable='{enable_expr}':"
+            f"eof_action=repeat"
+            f"[vlogo]"
+        )
+
         video_label = "vlogo"
 
     if overlay_filter:
-        filter_parts.append(f"[{video_label}]{overlay_filter}[vtext]")
+        filter_parts.append(
+            f"[{video_label}]{overlay_filter}[vtext]"
+        )
         video_label = "vtext"
 
     audio_label = None
+
     if music_index is not None:
+        audio_start = max(0.0, float(music.start_time or 0.0))
+        audio_end = audio_start + float(target_duration)
         fade_out_start = max(target_duration - MUSIC_FADE_SECONDS, 0.0)
         music_chain = (
-            f"[{music_index}:a]atrim=0:{target_duration:.3f},"
+            f"[{music_index}:a]"
+            f"atrim={audio_start:.3f}:{audio_end:.3f},"
+            f"asetpts=PTS-STARTPTS,"
             f"afade=t=in:st=0:d={MUSIC_FADE_SECONDS},"
             f"afade=t=out:st={fade_out_start:.3f}:d={MUSIC_FADE_SECONDS},"
             f"volume={music.volume}[amusic]"
         )
         filter_parts.append(music_chain)
+
         if music.preserve_original_audio:
             filter_parts.append("[0:a]volume=0.15[aquiet]")
-            filter_parts.append("[amusic][aquiet]amix=inputs=2:duration=first:dropout_transition=0[aout]")
+            filter_parts.append(
+                "[amusic][aquiet]"
+                "amix=inputs=2:duration=first:dropout_transition=0[aout]"
+            )
             audio_label = "aout"
         else:
             audio_label = "amusic"
 
     if filter_parts:
-        args += ["-filter_complex", ";".join(filter_parts), "-map", f"[{video_label}]"]
+        args += [
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            f"[{video_label}]",
+        ]
     else:
         args += ["-map", "0:v"]
 
     args += ["-map", f"[{audio_label}]" if audio_label else "0:a"]
     args += [
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
-        "-t", str(target_duration),
-        "-movflags", "+faststart",
-        # Cheap insurance: raise ffmpeg's small default muxer packet-queue
-        # cap whenever a filter graph is in play (logo overlay + looped
-        # music), so packets are never silently dropped under buffering
-        # pressure instead of erroring.
-        "-max_muxing_queue_size", "9999",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-b:a",
+        "128k",
+        "-t",
+        str(target_duration),
+        "-movflags",
+        "+faststart",
+        "-max_muxing_queue_size",
+        "9999",
         str(output_path),
     ]
+
     run_ffmpeg(args)
 
 
@@ -378,6 +1012,7 @@ def compose_reel_from_editor_plan(
     target_height: int = DEFAULT_TARGET_HEIGHT,
     fps: int = DEFAULT_FPS,
     music_path: str | Path | None = None,
+    template_image_path: str | Path | None = None,
 ) -> ReelResult:
     """Phase 8 entry point: the ReelPlan (clip order, trims, per-clip
     transitions, branding, product overlays) is the single source of truth
@@ -398,7 +1033,10 @@ def compose_reel_from_editor_plan(
         update={
             "branding": reel_plan.branding.model_copy(
                 update={
-                    "brand_name": brand_config.name,
+                    "brand_name": (
+    reel_plan.branding.brand_name
+    or brand_config.name
+),
                     "logo_path": str(brand_logo_path) if brand_logo_path else None,
                 }
             )
@@ -408,6 +1046,17 @@ def compose_reel_from_editor_plan(
     planned_clips = to_composer_planned_clips(reel_plan)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    template_path = (
+        Path(template_image_path)
+        if template_image_path is not None
+        else None
+    )
+
+    if template_path is not None and not template_path.exists():
+        raise FileNotFoundError(
+            f"Template image not found: {template_path}"
+        )
 
     start = time.perf_counter()
 
@@ -471,49 +1120,162 @@ def compose_reel_from_editor_plan(
         intro_actual = 0.0
         render_clip_paths = list(clip_paths)
         render_measured_clips = list(measured_clips)
-        if reel_plan.intro_seconds > 0 or reel_plan.outro_seconds > 0:
-            # branding.logo_path was already forced to the central brand's
-            # logo above, so this is just re-validating it still exists.
+                # ---------------------------------------------------------------
+        # TEMPLATE INTRO
+        # ---------------------------------------------------------------
+        # Show the uploaded template as a full-screen image for 0.5s.
+        # It is NOT blended with the first product clip.
+        # ---------------------------------------------------------------
+
+        template_actual = 0.0
+
+        if template_image_path is not None:
+            template_image_path = Path(template_image_path)
+
+            if template_image_path.exists():
+                template_intro_path = tmp_dir / "template_intro.mp4"
+
+                run_ffmpeg(
+                    [
+                        "-y",
+                        "-loop",
+                        "1",
+                        "-framerate",
+                        str(fps),
+                        "-i",
+                        str(template_image_path),
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "anullsrc=channel_layout=stereo:sample_rate=44100",
+                        "-t",
+                        "0.5",
+                        "-vf",
+                        (
+                            f"scale={target_width}:{target_height}:"
+                            "force_original_aspect_ratio=decrease,"
+                            f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2"
+                        ),
+                        "-r",
+                        str(fps),
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "23",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-c:a",
+                        "aac",
+                        "-ar",
+                        "44100",
+                        "-ac",
+                        "2",
+                        "-b:a",
+                        "128k",
+                        "-t",
+                        "0.5",
+                        str(template_intro_path),
+                    ]
+                )
+
+                template_actual = get_video_metadata(
+                    template_intro_path
+                ).duration
+
+                template_clip = PlannedClip(
+                    source_file="__template_intro__",
+                    start_time=0.0,
+                    end_time=template_actual,
+                    duration=template_actual,
+                    score=100,
+                    transition_in=_NO_TRANSITION,
+                )
+
+                render_clip_paths = (
+                    [template_intro_path] + render_clip_paths
+                )
+
+                render_measured_clips = (
+                    [template_clip] + render_measured_clips
+                )
+                
+        
+
+        render_timeline = compute_timeline_plan(render_measured_clips)
+
+        render_duration = min(
+            reel_plan.target_duration,
+            render_timeline.total_duration,
+        )
+
+        final_render_duration = render_duration + END_CARD_DURATION
+                # ---------------------------------------------------------------
+        # BRAND INTRO BUMPER
+        # ---------------------------------------------------------------
+        # Only create the bumper when the user selected
+        # "Starting of Reel".
+        #
+        # The template remains the first 0.5 seconds.
+        # The bumper comes immediately after the template.
+        # ---------------------------------------------------------------
+
+        logo_placement = get_logo_placement()
+
+        if logo_placement == "start":
             bumper_logo_path = (
                 Path(reel_plan.branding.logo_path)
-                if reel_plan.branding.logo_path and Path(reel_plan.branding.logo_path).exists()
+                if (
+                    reel_plan.branding.logo_path
+                    and Path(reel_plan.branding.logo_path).exists()
+                )
                 else None
             )
 
-            if reel_plan.intro_seconds > 0:
-                intro_path = tmp_dir / "bumper_intro.mp4"
-                build_bumper_clip(
-                    intro_path, reel_plan.branding.brand_name, bumper_logo_path,
-                    target_width, target_height, fps,
-                    duration=reel_plan.intro_seconds, fade_in=True, fade_out=False,
-                    text_color=brand_config.primary_color,
-                )
-                intro_actual = get_video_metadata(intro_path).duration
-                intro_clip = PlannedClip(
-                    source_file="__bumper_intro__", start_time=0.0, end_time=intro_actual,
-                    duration=intro_actual, score=100, transition_in=TransitionConfig(),
-                )
-                render_clip_paths = [intro_path] + render_clip_paths
-                first_content = render_measured_clips[0].model_copy(update={"transition_in": _NO_TRANSITION})
-                render_measured_clips = [intro_clip, first_content] + render_measured_clips[1:]
+            intro_path = tmp_dir / "bumper_intro.mp4"
 
-            if reel_plan.outro_seconds > 0:
-                outro_path = tmp_dir / "bumper_outro.mp4"
-                build_bumper_clip(
-                    outro_path, reel_plan.branding.brand_name, bumper_logo_path,
-                    target_width, target_height, fps,
-                    duration=reel_plan.outro_seconds, fade_in=False, fade_out=True,
-                    text_color=brand_config.primary_color,
-                )
-                outro_actual = get_video_metadata(outro_path).duration
-                outro_clip = PlannedClip(
-                    source_file="__bumper_outro__", start_time=0.0, end_time=outro_actual,
-                    duration=outro_actual, score=100, transition_in=_NO_TRANSITION,
-                )
-                render_clip_paths = render_clip_paths + [outro_path]
-                render_measured_clips = render_measured_clips + [outro_clip]
+            build_bumper_clip(
+                intro_path,
+                reel_plan.branding.brand_name,
+                bumper_logo_path,
+                target_width,
+                target_height,
+                fps,
+                duration=2.0,
+                fade_in=True,
+                fade_out=False,
+                text_color=brand_config.primary_color,
+            )
 
-        render_timeline = compute_timeline_plan(render_measured_clips)
+            intro_actual = get_video_metadata(
+                intro_path
+            ).duration
+
+            intro_clip = PlannedClip(
+                source_file="__bumper_intro__",
+                start_time=0.0,
+                end_time=intro_actual,
+                duration=intro_actual,
+                score=100,
+                transition_in=_NO_TRANSITION,
+            )
+
+            # Template first → bumper second → actual reel
+            render_clip_paths = (
+                render_clip_paths[:1]
+                + [intro_path]
+                + render_clip_paths[1:]
+            )
+
+            render_measured_clips = (
+                render_measured_clips[:1]
+                + [intro_clip]
+                + render_measured_clips[1:]
+            )
+
+            
+            
 
         # Phase 9 critical invariant (section 29): video duration = music
         # duration = target duration. If the actual video content falls short
@@ -521,6 +1283,7 @@ def compose_reel_from_editor_plan(
         # must be capped to match it - never let looped/extended music run
         # past where the video ends.
         render_duration = min(reel_plan.target_duration, render_timeline.total_duration)
+        final_render_duration = render_duration + END_CARD_DURATION
 
         # Configured font_family takes priority, but a missing/invalid path
         # must never crash the render - fall back to a bundled system font.
@@ -529,6 +1292,26 @@ def compose_reel_from_editor_plan(
         windows = resolve_overlay_windows(
             sorted_story_clips, content_timeline, reel_plan.branding, reel_plan.product, reel_plan.overlays
         )
+                # ---------------------------------------------------------------
+        # PRODUCT END CARD
+        # ---------------------------------------------------------------
+        # Product information is rendered directly on the final
+        # product end-card image. Do not render the product title/details
+        # again as timed overlays.
+        # ---------------------------------------------------------------
+
+        windows = [
+            window
+            for window in windows
+            if window.get("role") not in {
+                "product",
+                "product_title",
+                "product_name",
+                "detail_primary",
+                "detail_secondary",
+                "price",
+            }
+        ]
         if intro_actual > 0:
             # Shift every content overlay window by the intro's real
             # duration - the content no longer starts at t=0 in the final
@@ -543,27 +1326,77 @@ def compose_reel_from_editor_plan(
             effective_font = effective_font.model_copy(update={"accent_color": accent_color})
         overlay_filter = build_timed_overlay_filter(windows, font_file, effective_font)
 
+                # ---------------------------------------------------------------
+        # BRAND LOGO PLACEMENT
+        # ---------------------------------------------------------------
+        # The logo is independent of the intro bumper.
+        #
+        # start  -> logo appears during the first 2 seconds
+        # entire -> logo remains visible for the complete final reel
+        # ---------------------------------------------------------------
+
         logo_path = None
         logo_windows: list[tuple[float, float]] = []
+
         if reel_plan.branding.logo_path:
-            candidate_logo = Path(reel_plan.branding.logo_path)
+            candidate_logo = Path(
+                reel_plan.branding.logo_path
+            )
+
             if candidate_logo.exists():
                 logo_path = candidate_logo
-                if reel_plan.branding.show_logo_at_start:
-                    logo_windows.append(
-                        (0.0, min(reel_plan.branding.intro_duration, content_timeline.total_duration))
-                    )
-                if reel_plan.branding.show_logo_at_end:
-                    logo_windows.append(
+
+                logo_placement = get_logo_placement()
+
+                if logo_placement == "entire":
+                    logo_windows = [
                         (
-                            max(content_timeline.total_duration - reel_plan.branding.intro_duration, 0.0),
-                            content_timeline.total_duration,
+                            0.0,
+                            final_render_duration,
                         )
+                    ]
+
+                else:
+                    # ---------------------------------------------------
+                    # START OF REEL
+                    # ---------------------------------------------------
+                    # First 0.5s = full-screen template.
+                    # Logo starts when the actual reel starts.
+
+                    logo_start = template_actual
+
+                    logo_end = min(
+                        logo_start + 2.0,
+                        final_render_duration,
                     )
-                if intro_actual > 0:
-                    logo_windows = [(s + intro_actual, e + intro_actual) for s, e in logo_windows]
-            # else: no logo file found - degrade gracefully to brand text
-            # only, which build_timed_overlay_filter above already handles.
+
+                    logo_windows = [
+                        (
+                            logo_start,
+                            logo_end,
+                        )
+                    ]
+
+                print(
+                    f"[BRANDING] Logo: {logo_path}"
+                )
+
+                print(
+                    f"[BRANDING] Placement: {logo_placement}"
+                )
+
+                print(
+                    f"[BRANDING] Logo windows: {logo_windows}"
+                )
+
+            else:
+                print(
+                    f"[BRANDING] Logo file not found: "
+                    f"{candidate_logo}"
+                )
+
+        # If the configured logo file does not exist, the renderer simply
+        # continues without a logo.
 
         intermediate_path = tmp_dir / "concatenated.mp4"
         if len(render_clip_paths) == 1:
@@ -579,6 +1412,43 @@ def compose_reel_from_editor_plan(
             # durations - the exact guarantee an xfade-based chain kept
             # breaking on long/real-world footage.
             concatenate_clips(render_clip_paths, intermediate_path, tmp_dir)
+
+                # ===============================================================
+        # APPEND PRODUCT END CARD
+        # ===============================================================
+
+        end_card_image = tmp_dir / "product_end_card.png"
+
+        create_product_end_card(
+            output_path=end_card_image,
+            product=reel_plan.product,
+            brand_config=brand_config,
+            logo_path=None,
+            shop_name=reel_plan.branding.brand_name,
+            width=target_width,
+            height=target_height,
+        )
+
+        end_card_video = tmp_dir / "product_end_card.mp4"
+
+        build_product_end_card_video(
+            image_path=end_card_image,
+            output_path=end_card_video,
+            duration=END_CARD_DURATION,
+            width=target_width,
+            height=target_height,
+            fps=fps,
+        )
+
+        reel_with_end_card = tmp_dir / "reel_with_end_card.mp4"
+
+        concatenate_clips(
+            [intermediate_path, end_card_video],
+            reel_with_end_card,
+            tmp_dir,
+        )
+
+        intermediate_path = reel_with_end_card
 
         music_selection = reel_plan.music
         music_file_path = None
@@ -610,9 +1480,12 @@ def compose_reel_from_editor_plan(
             overlay_filter,
             logo_path,
             logo_windows,
-            render_duration,
+            final_render_duration,
             music=music_selection,
             music_file_path=music_file_path,
+            template_image_path=template_path,
+            target_width=target_width,
+            target_height=target_height,
             logo_size=reel_plan.branding.logo_size,
             logo_position=reel_plan.branding.logo_position,
         )
@@ -623,7 +1496,7 @@ def compose_reel_from_editor_plan(
     # Phase 9 critical invariant: final_duration ≈ target_duration. Measured
     # via ffprobe (output_metadata.duration), not assumed from the plan -
     # this is the ground truth the user actually receives.
-    target_duration = reel_plan.target_duration
+    target_duration = reel_plan.target_duration + END_CARD_DURATION
     tolerance = max(0.5, target_duration * 0.05)
     duration_status = "ok" if abs(output_metadata.duration - target_duration) <= tolerance else "insufficient_content"
 

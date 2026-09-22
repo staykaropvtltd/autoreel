@@ -6,41 +6,78 @@ interface ResultScreenProps {
   onGenerateAnother: () => void;
 }
 
-export default function ResultScreen({ reel, onGenerateAnother }: ResultScreenProps) {
+export default function ResultScreen({
+  reel,
+  onGenerateAnother,
+}: ResultScreenProps) {
   const fileUrl = reelFileUrl(reel.reel_id);
 
   return (
     <div className="max-w-md w-full mx-auto px-4 py-10 space-y-6">
+      {/* HEADER */}
       <div className="text-center space-y-1">
-        <h2 className="text-2xl font-semibold text-slate-100">Your Reel is Ready</h2>
-        <p className="text-slate-500 text-sm">Publish-ready for Instagram, Facebook &amp; YouTube Shorts</p>
+        <h2 className="text-2xl font-semibold text-[var(--color-text-primary)]">
+          Your Reel is Ready
+        </h2>
+
+        <p className="text-[var(--color-text-secondary)] text-sm">
+          Publish-ready for Instagram, Facebook &amp; YouTube Shorts
+        </p>
       </div>
 
-      <div className="mx-auto w-full max-w-[280px] aspect-9/16 rounded-xl overflow-hidden border border-slate-800 bg-black">
-        <video src={fileUrl} controls className="h-full w-full object-contain" />
+      {/* VIDEO PREVIEW */}
+      <div className="mx-auto w-full max-w-[280px] aspect-9/16 rounded-xl overflow-hidden border border-[var(--color-border)] bg-black">
+        <video
+          src={fileUrl}
+          controls
+          className="h-full w-full object-contain"
+        />
       </div>
 
+      {/* REEL DETAILS */}
       <div className="grid grid-cols-2 gap-3 text-center">
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <p className="text-sm font-semibold text-slate-100">{reel.duration.toFixed(1)}s</p>
-          <p className="text-xs text-slate-500">Duration</p>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {reel.duration.toFixed(1)}s
+          </p>
+
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Duration
+          </p>
         </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <p className="text-sm font-semibold text-slate-100">
+
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">
             {reel.width} × {reel.height}
           </p>
-          <p className="text-xs text-slate-500">Resolution</p>
+
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Resolution
+          </p>
         </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <p className="text-sm font-semibold text-slate-100">{reel.video_codec.toUpperCase()}</p>
-          <p className="text-xs text-slate-500">Video codec</p>
+
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {reel.video_codec.toUpperCase()}
+          </p>
+
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Video codec
+          </p>
         </div>
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <p className="text-sm font-semibold text-slate-100">{reel.audio_codec?.toUpperCase() ?? "None"}</p>
-          <p className="text-xs text-slate-500">Audio codec</p>
+
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {reel.audio_codec?.toUpperCase() ?? "None"}
+          </p>
+
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Audio codec
+          </p>
         </div>
       </div>
 
+      {/* ACTIONS */}
       <div className="flex flex-col sm:flex-row gap-3">
         <a
           href={fileUrl}
@@ -49,9 +86,10 @@ export default function ResultScreen({ reel, onGenerateAnother }: ResultScreenPr
         >
           Download Reel
         </a>
+
         <button
           onClick={onGenerateAnother}
-          className="flex-1 rounded-md border border-slate-700 text-slate-200 font-medium py-2.5 hover:border-slate-500 transition-colors"
+          className="flex-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium py-2.5 hover:border-[var(--color-brand-primary)] transition-colors"
         >
           Generate Another
         </button>

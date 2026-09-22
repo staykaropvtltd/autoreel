@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Audiowide&family=DM+Mono:wght@400;500&family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Hedvig+Letters+Serif:opsz@12..24&family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&family=Lato:wght@400;700&family=Manrope:wght@400;500;600;700&family=Monda:wght@400;500;600;700&family=Outfit:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Red+Hat+Display:wght@400;500;600;700&family=Rethink+Sans:wght@400;500;600;700&family=Tillana:wght@400;500;600;700&family=Urbanist:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..700&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&family=Sora:wght@400..800&family=Space+Grotesk:wght@400..700&display=swap");
 @import "tailwindcss";
 @import "./originkit-section-themes.css";
 @import "./originkit-section-theme.css";
@@ -16,11 +16,13 @@
   --color-text-secondary: #a39e9b;
   --color-border: rgba(255, 255, 255, 0.08);
 
-  --font-sans: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
-  --font-serif: "Playfair Display", Georgia, "Times New Roman", serif;
-  --font-cinzel: "Cinzel", Georgia, serif;
-  --font-pixel: "Pixelify Sans", "Silkscreen", monospace;
-  --font-silkscreen: "Silkscreen", monospace;
+  --font-display: "Space Grotesk", "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Inter", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: "Space Grotesk", "Sora", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-cinzel: "Space Grotesk", "Sora", sans-serif;
+  --font-pixel: "JetBrains Mono", monospace;
+  --font-silkscreen: "JetBrains Mono", monospace;
 }
 
 html {
@@ -42,8 +44,16 @@ html.dark {
 body {
   margin: 0;
   padding: 0;
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-sans);
   transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+h1, h2, h3, h4, h5, h6, .font-display {
+  font-family: var(--font-display);
+}
+
+code, pre, kbd, samp, .font-mono {
+  font-family: var(--font-mono);
 }
 
 html.light body {

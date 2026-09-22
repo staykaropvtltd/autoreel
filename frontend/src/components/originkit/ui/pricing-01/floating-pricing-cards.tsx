@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { Sparkles, Wifi } from "lucide-react";
+import { Wifi } from "lucide-react";
 
 export default function FloatingPricingCards() {
   return (
@@ -149,13 +149,13 @@ export default function FloatingPricingCards() {
           {/* Right Color-Block Pattern Column */}
           <div className="absolute right-0 top-0 bottom-0 w-12 sm:w-14 bg-[#1E6BFF] flex flex-col items-center justify-around py-3">
             <div className="w-6 h-6 rounded-full bg-[#FF715B] flex items-center justify-center text-white text-[10px] font-bold">
-              ✦
+              ◆
             </div>
             <div className="w-6 h-6 rounded-md bg-[#25D366] flex items-center justify-center text-white text-[10px] font-bold">
               ✿
             </div>
             <div className="w-6 h-6 rounded-full bg-[#FFD15C] flex items-center justify-center text-black text-[10px] font-bold">
-              ★
+              ▲
             </div>
             <div className="w-6 h-6 rounded-md bg-[#FF428E] flex items-center justify-center text-white text-[10px] font-bold">
               ●
@@ -196,7 +196,6 @@ export default function FloatingPricingCards() {
 
       {/* Interactive Helper Text */}
       <div className="mt-4 flex items-center gap-2 text-xs font-medium text-[#A39E9B]">
-        <Sparkles className="w-3.5 h-3.5 text-[#F3C766]" />
         <span>Drag or hover cards to explore membership pass tiers</span>
       </div>
 

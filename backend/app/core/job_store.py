@@ -14,6 +14,7 @@ _lock = threading.Lock()
 _upload_jobs: dict[str, dict[str, Any]] = {}
 _analysis_jobs: dict[str, dict[str, Any]] = {}
 _reel_jobs: dict[str, dict[str, Any]] = {}
+_template_images: dict[str, dict[str, Any]] = {}
 
 
 def create_upload_job(job_id: str, files: list[dict[str, Any]]) -> None:
@@ -27,9 +28,18 @@ def get_upload_job(job_id: str) -> dict[str, Any] | None:
         return dict(job) if job is not None else None
 
 
-def create_analysis_job(job_id: str, source_dir: Path) -> None:
+def create_analysis_job(
+    job_id: str,
+    source_dir: Path,
+    template_id: str | None = None,
+) -> None:
     with _lock:
-        _analysis_jobs[job_id] = {"status": "queued", "stage": "queued", "source_dir": source_dir}
+        _analysis_jobs[job_id] = {
+            "status": "queued",
+            "stage": "queued",
+            "source_dir": source_dir,
+            "template_id": template_id,
+        }
 
 
 def update_analysis_job(job_id: str, **fields: Any) -> None:
@@ -53,3 +63,23 @@ def get_reel_job(reel_id: str) -> dict[str, Any] | None:
     with _lock:
         job = _reel_jobs.get(reel_id)
         return dict(job) if job is not None else None
+
+def create_template_image(
+    template_id: str,
+    filename: str,
+    path: str,
+) -> None:
+    with _lock:
+        _template_images[template_id] = {
+            "template_id": template_id,
+            "filename": filename,
+            "path": path,
+        }
+
+
+def get_template_image(
+    template_id: str,
+) -> dict[str, Any] | None:
+    with _lock:
+        template = _template_images.get(template_id)
+        return dict(template) if template is not None else None

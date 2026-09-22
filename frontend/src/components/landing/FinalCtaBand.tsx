@@ -84,7 +84,7 @@ export default function FinalCtaBand({ onLaunchStudio }: FinalCtaBandProps) {
                 : { color: "#222222", size: 95, smoothness: 55 }
             }
             font={{
-              fontFamily: "Plus Jakarta Sans, sans-serif",
+              fontFamily: '"Space Grotesk", "Sora", sans-serif',
               fontSize: "17px",
               fontWeight: 700,
               letterSpacing: "0.01em",

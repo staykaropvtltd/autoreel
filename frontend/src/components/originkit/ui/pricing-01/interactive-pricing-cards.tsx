@@ -153,7 +153,7 @@ const CardGraphic = ({
               isLight ? "bg-[#1D63FF] text-white shadow-sm" : "bg-white/20 text-white"
             }`}
           >
-            ✦
+            ◆
           </div>
           <div
             className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold ${
@@ -167,7 +167,7 @@ const CardGraphic = ({
               isLight ? "bg-[#25D366] text-white shadow-sm" : "bg-white/25 text-white"
             }`}
           >
-            ★
+            ▲
           </div>
           <div
             className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold ${
@@ -690,7 +690,7 @@ export default function InteractivePricingCards({ onLaunchStudio }: InteractiveP
                             : { color: "#222222", size: 85, smoothness: 55 }
                         }
                         font={{
-                          fontFamily: "Plus Jakarta Sans, sans-serif",
+                          fontFamily: '"Space Grotesk", "Sora", sans-serif',
                           fontSize: "15px",
                           fontWeight: 700,
                         }}

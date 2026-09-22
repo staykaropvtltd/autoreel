@@ -242,6 +242,19 @@ def select_best_clips(
 
     selected_clips, not_selected_clips = select_diverse_clips(unique_candidates, config)
 
+    if not selected_clips and aggregated:
+        best_candidate_pair = max(aggregated, key=lambda pair: pair[0].score.score)
+        fallback_clip = _to_batch_clip(best_candidate_pair[0], SelectionStatus.SELECTED, selected=True)
+        selected_clips = [fallback_clip]
+        quality_rejected = [
+            c for c in quality_rejected
+            if not (c.source_file == fallback_clip.source_file and abs(c.start_time - fallback_clip.start_time) < 1e-4)
+        ]
+        duplicate_rejected = [
+            c for c in duplicate_rejected
+            if not (c.source_file == fallback_clip.source_file and abs(c.start_time - fallback_clip.start_time) < 1e-4)
+        ]
+
     _apply_neighbor_distances(selected_clips, neighbor_distances)
     _apply_neighbor_distances(not_selected_clips, neighbor_distances)
 

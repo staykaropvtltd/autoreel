@@ -5,17 +5,27 @@ interface ProgressScreenProps {
   error?: string | null;
 }
 
-export default function ProgressScreen({ title, stages, currentStage, error }: ProgressScreenProps) {
+export default function ProgressScreen({
+  title,
+  stages,
+  currentStage,
+  error,
+}: ProgressScreenProps) {
   const currentIndex = stages.findIndex((s) => s.key === currentStage);
 
   return (
     <div className="max-w-md w-full mx-auto px-4 py-16">
-      <h2 className="text-xl font-semibold text-[var(--color-text-primary)] text-center mb-8">{title}</h2>
+      <h2 className="text-xl font-semibold text-[var(--color-text-primary)] text-center mb-8">
+        {title}
+      </h2>
 
       <ul className="space-y-3">
         {stages.map((stage, i) => {
-          const done = currentIndex > i || (error != null && i < currentIndex);
+          const done =
+            currentIndex > i || (error != null && i < currentIndex);
+
           const active = i === currentIndex && !error;
+
           return (
             <li
               key={stage.key}
@@ -40,7 +50,14 @@ export default function ProgressScreen({ title, stages, currentStage, error }: P
               >
                 {done ? "✓" : ""}
               </span>
-              <span className={done || active ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}>
+
+              <span
+                className={
+                  done || active
+                    ? "text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-secondary)]"
+                }
+              >
                 {stage.label}
               </span>
             </li>

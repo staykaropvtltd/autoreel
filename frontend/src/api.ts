@@ -10,7 +10,13 @@ export async function uploadVideos(files: File[]): Promise<UploadResponse> {
   return response.data;
 }
 
-export async function startAnalysis(params: { job_id?: string; use_demo?: boolean }): Promise<{
+export async function startAnalysis(
+  params: {
+    job_id?: string;
+    use_demo?: boolean;
+    template_id?: string;
+  }
+): Promise<{
   job_id: string;
   status: string;
 }> {
@@ -42,9 +48,23 @@ export interface GenerateReelPayload {
   output_filename?: string;
 }
 
-export async function generateReel(payload: GenerateReelPayload): Promise<ReelResult> {
-  const response = await axios.post<ReelResult>(`${API_BASE}/reels/generate`, payload);
-  return response.data;
+export async function generateReel(
+  payload: GenerateReelPayload
+): Promise<ReelResult> {
+  const response = await axios.post<ReelResult>(
+    `${API_BASE}/reels/generate`,
+    payload,
+    { timeout: 120000 }
+  );
+
+  const data = response.data;
+
+  return {
+    ...data,
+    download_url: data.download_url.startsWith("http")
+      ? data.download_url
+      : `${API_BASE.replace("/api", "")}${data.download_url}`,
+  };
 }
 
 export async function getReelStatus(reelId: string): Promise<ReelResult> {
@@ -71,4 +91,14 @@ export async function listMusic(): Promise<MusicTrack[]> {
 
 export function musicPreviewUrl(trackId: string): string {
   return `${API_BASE}/music/${trackId}/preview`;
+}
+export async function uploadMusic(file: File): Promise<void> {
+  const formData = new FormData();
+
+  formData.append("file", file);
+
+  await axios.post(
+    `${API_BASE}/music/upload`,
+    formData,
+  );
 }

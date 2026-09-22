@@ -68,7 +68,7 @@ export default function PixelDrift({
       const offCtx = offscreen.getContext("2d", { willReadFrequently: true });
       if (!offCtx) return;
 
-      offCtx.font = `800 ${responsiveFontSize}px "Plus Jakarta Sans", "Inter", -apple-system, sans-serif`;
+      offCtx.font = `800 ${responsiveFontSize}px "Space Grotesk", "Sora", -apple-system, sans-serif`;
       offCtx.letterSpacing = "0.025em";
 
       // Multi-line word wrap algorithm
@@ -106,7 +106,7 @@ export default function PixelDrift({
       offCtx.fillStyle = "#FFFFFF";
       offCtx.textAlign = "center";
       offCtx.textBaseline = "middle";
-      offCtx.font = `800 ${responsiveFontSize}px "Plus Jakarta Sans", "Inter", -apple-system, sans-serif`;
+      offCtx.font = `800 ${responsiveFontSize}px "Space Grotesk", "Sora", -apple-system, sans-serif`;
       offCtx.letterSpacing = "0.025em";
 
       const startY = (height - totalTextHeight) / 2 + responsiveFontSize * 0.5;

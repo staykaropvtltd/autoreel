@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import MagnettoHeroSection from "./MagnettoHeroSection";
+import LandingNavbar from "./LandingNavbar";
+import LandingHeroStepSection from "./LandingHeroStepSection";
 import ScrollStatementSection from "./ScrollStatementSection";
 import HowItWorksSection from "./HowItWorksSection";
 import PricingSection from "./PricingSection";
@@ -28,6 +29,7 @@ export default function LandingPage({
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<"signin" | "signup">("signin");
+  const [showContactModal, setShowContactModal] = useState(false);
 
   const openAuth = (mode: "signin" | "signup" = "signin") => {
     if (mode === "signin" && onNavigateToSignIn) {
@@ -48,15 +50,18 @@ export default function LandingPage({
   }, []);
 
   return (
-    <div
-      className={`min-h-screen font-sans antialiased overflow-x-hidden transition-colors duration-300 ${
-        isLight
-          ? "bg-[#F8F7F4] text-[#0A0A0C] selection:bg-black/15 selection:text-black"
-          : "bg-[#09090B] text-white selection:bg-white/20 selection:text-white"
-      }`}
-    >
-      {/* 1. Magnetto Hero Screen with Centered Human Model, Pixel Typography, Editorial Copy & Floating Dock */}
-      <MagnettoHeroSection onLaunchStudio={onLaunchStudio} onOpenAuth={openAuth} />
+    <div className="min-h-screen font-sans antialiased overflow-x-hidden bg-white text-neutral-900 selection:bg-black/15 selection:text-black">
+      {/* 1. Fixed/Sticky Top Navigation Bar (Pitch Black) */}
+      <LandingNavbar
+        onLaunchStudio={onLaunchStudio}
+        onOpenContact={() => setShowContactModal(true)}
+        onOpenAuth={openAuth}
+      />
+
+      {/* 2. Hero Section with 3-Step Interactive Animation (Pure White Background) */}
+      <div className="w-full bg-white text-black">
+        <LandingHeroStepSection onLaunchStudio={onLaunchStudio} />
+      </div>
 
       {/* 2. Seamless Section Continuity */}
       <ReflectBackground gap={28} dotSize={1.8} radius={45}>
@@ -83,6 +88,103 @@ export default function LandingPage({
         initialMode={authModalMode}
         onSuccess={onLaunchStudio}
       />
+
+      {/* 5. Contact Modal */}
+      {showContactModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+          <div
+            className={`relative w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5 transition-colors ${
+              isLight
+                ? "bg-white border border-neutral-200 text-neutral-950 shadow-[0_25px_60px_rgba(0,0,0,0.18)]"
+                : "bg-neutral-900 border border-neutral-700 text-white"
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setShowContactModal(false)}
+              className={`absolute top-4 right-4 p-1 rounded-full transition-colors cursor-pointer ${
+                isLight
+                  ? "text-neutral-500 hover:text-neutral-950 hover:bg-neutral-100"
+                  : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+              }`}
+            >
+              ✕
+            </button>
+
+            <div className="space-y-1">
+              <span
+                className={`text-[10px] font-mono uppercase tracking-wider font-bold ${
+                  isLight ? "text-[#C26715]" : "text-neutral-300"
+                }`}
+              >
+                Get In Touch
+              </span>
+              <h3 className={`text-xl sm:text-2xl font-bold tracking-tight ${isLight ? "text-neutral-950" : "text-white"}`}>
+                Contact Kaladhar Studio
+              </h3>
+              <p className={`text-xs ${isLight ? "text-neutral-600" : "text-neutral-400"}`}>
+                Turn your saree & ethnic wear catalog into viral social Reels.
+              </p>
+            </div>
+
+            <div className="space-y-2.5 pt-2 text-xs font-mono">
+              <a
+                href="https://wa.me/919876543210"
+                target="_blank"
+                rel="noreferrer"
+                className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${
+                  isLight
+                    ? "bg-emerald-50/80 hover:bg-emerald-100/80 border-emerald-200 text-emerald-950"
+                    : "bg-neutral-800/80 hover:bg-neutral-700/80 border-neutral-700 text-white"
+                }`}
+              >
+                <span className={isLight ? "text-emerald-900 font-medium" : "text-neutral-300"}>WhatsApp Studio</span>
+                <span className={isLight ? "font-bold text-emerald-700" : "font-semibold underline"}>+91 (WhatsApp) →</span>
+              </a>
+
+              <a
+                href="mailto:contact@staykaro.org"
+                className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${
+                  isLight
+                    ? "bg-amber-50/80 hover:bg-amber-100/80 border-amber-200 text-amber-950"
+                    : "bg-neutral-800/80 hover:bg-neutral-700/80 border-neutral-700 text-white"
+                }`}
+              >
+                <span className={isLight ? "text-amber-900 font-medium" : "text-neutral-300"}>Email Support</span>
+                <span className={isLight ? "font-bold text-amber-700" : "font-medium underline"}>contact@staykaro.org</span>
+              </a>
+
+              <div
+                className={`flex items-center justify-between p-3 rounded-xl border ${
+                  isLight
+                    ? "bg-neutral-50 border-neutral-200 text-neutral-900"
+                    : "bg-neutral-800/80 border-neutral-700 text-white"
+                }`}
+              >
+                <span className={isLight ? "text-neutral-700 font-medium" : "text-neutral-300"}>Location</span>
+                <span className={isLight ? "text-neutral-600" : "text-neutral-400"}>Hyderabad, India</span>
+              </div>
+            </div>
+
+            <div className={`pt-3 border-t ${isLight ? "border-neutral-200" : "border-neutral-800"}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowContactModal(false);
+                  onLaunchStudio();
+                }}
+                className={`w-full py-3 rounded-xl font-bold font-mono text-xs tracking-wider uppercase transition-all shadow-lg cursor-pointer ${
+                  isLight
+                    ? "bg-gradient-to-r from-[#FF611A] to-[#FC731C] text-white hover:brightness-105 shadow-[0_4px_16px_rgba(252,115,28,0.4)]"
+                    : "bg-white text-neutral-950 hover:bg-neutral-200"
+                }`}
+              >
+                Launch Reel Studio Now →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

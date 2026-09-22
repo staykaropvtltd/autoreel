@@ -60,3 +60,78 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
 def demo_status() -> dict:
     available = DEMO_RAW_DIR.exists() and any(DEMO_RAW_DIR.glob("*.mp4"))
     return {"available": available}
+
+# Template images are stored separately from uploaded videos.
+TEMPLATE_IMAGES_DIR = _PROJECT_ROOT / "storage" / "templates"
+
+ALLOWED_TEMPLATE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+}
+
+MAX_TEMPLATE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
+@router.post("/templates/upload")
+async def upload_template_image(
+    file: UploadFile = File(...)
+) -> dict:
+    if not file:
+        raise HTTPException(
+            status_code=400,
+            detail="No template image provided"
+        )
+
+    filename = safe_filename(file.filename or "")
+    extension = Path(filename).suffix.lower()
+
+    if extension not in ALLOWED_TEMPLATE_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported template image format: {filename}. "
+                f"Allowed: JPG, JPEG, PNG, WEBP"
+            )
+        )
+
+    # Create a unique template ID
+    template_id = str(uuid.uuid4())
+
+    # Store each template in its own folder
+    template_dir = TEMPLATE_IMAGES_DIR / template_id
+    template_dir.mkdir(parents=True, exist_ok=True)
+
+    destination = template_dir / filename
+
+    size = 0
+
+    with open(destination, "wb") as out_file:
+        while chunk := await file.read(_CHUNK_SIZE):
+            size += len(chunk)
+
+            if size > MAX_TEMPLATE_SIZE_BYTES:
+                out_file.close()
+                destination.unlink(missing_ok=True)
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Template image too large: {filename}"
+                )
+
+            out_file.write(chunk)
+
+    if size == 0:
+        destination.unlink(missing_ok=True)
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Empty template image: {filename}"
+        )
+
+    return {
+        "template_id": template_id,
+        "status": "uploaded",
+        "filename": filename,
+        "size": size,
+        "path": str(destination),
+    }

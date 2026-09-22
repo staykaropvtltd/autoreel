@@ -1,0 +1,435 @@
+/* =========================================================
+   BRAND LOGO PAGE
+   ========================================================= */
+
+.brand-logo-page {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding: 42px 24px 80px;
+}
+
+.brand-logo-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 30px;
+}
+
+.brand-logo-eyebrow {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--color-brand-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.brand-logo-header h1 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 600;
+}
+
+.brand-logo-header p {
+  margin: 10px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+}
+
+.brand-logo-back-button {
+  padding: 10px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.brand-logo-back-button:hover {
+  border-color: var(--color-brand-primary);
+}
+
+/* PROJECT */
+
+.brand-project-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.brand-project-info span {
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+
+.brand-project-info strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.brand-project-info small {
+  margin-left: auto;
+  color: var(--color-brand-primary);
+  font-size: 11px;
+}
+
+/* CARD */
+
+.brand-logo-card {
+  margin-top: 18px;
+  padding: 26px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+}
+
+.brand-logo-card-heading {
+  margin-bottom: 22px;
+}
+
+.brand-logo-card-heading > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.brand-logo-card-heading > div > span {
+  color: var(--color-brand-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.brand-logo-card-heading h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 19px;
+}
+
+.brand-logo-card-heading p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+/* UPLOAD */
+
+.brand-logo-upload-area {
+  width: 100%;
+  min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px dashed var(--color-border);
+  border-radius: 12px;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.brand-logo-upload-area:hover {
+  border-color: var(--color-brand-primary);
+  background: color-mix(
+    in srgb,
+    var(--color-brand-primary) 5%,
+    var(--color-background)
+  );
+}
+
+.brand-logo-upload-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: var(--color-brand-primary);
+  color: white;
+  font-size: 28px;
+}
+
+.brand-logo-upload-area strong {
+  font-size: 15px;
+}
+
+.brand-logo-upload-area span,
+.brand-logo-upload-area small {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+/* LOGO PREVIEW */
+
+.brand-logo-preview-area {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-background);
+}
+
+.brand-logo-preview {
+  width: 150px;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  overflow: hidden;
+  background: white;
+}
+
+.brand-logo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.brand-logo-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brand-logo-file-info strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.brand-logo-file-info span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.brand-logo-remove {
+  width: fit-content;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* PLACEMENT */
+
+.brand-placement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.brand-placement-option {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-background);
+  text-align: left;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.brand-placement-option:hover,
+.brand-placement-option.active {
+  border-color: var(--color-brand-primary);
+}
+
+.brand-placement-preview {
+  height: 250px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #090909;
+}
+
+.fake-reel {
+  position: relative;
+  width: 105px;
+  height: 190px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #333;
+  background: #171717;
+  color: white;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.fake-logo {
+  position: absolute;
+  top: 28px;
+  padding: 8px 12px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  font-size: 8px;
+}
+
+.fake-watermark {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 6px;
+}
+
+.brand-placement-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+}
+
+.brand-placement-copy strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.brand-placement-copy span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.brand-placement-radio {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: white;
+  font-size: 12px;
+}
+
+.brand-placement-option.active .brand-placement-radio {
+  border-color: var(--color-brand-primary);
+  background: var(--color-brand-primary);
+}
+
+/* ACTIONS */
+
+.brand-logo-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.brand-logo-cancel,
+.brand-logo-continue {
+  min-height: 46px;
+  padding: 0 22px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.brand-logo-cancel {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.brand-logo-continue {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: var(--color-brand-primary);
+  color: white;
+}
+
+.brand-logo-continue:hover {
+  opacity: 0.9;
+}
+
+/* MOBILE */
+
+@media (max-width: 700px) {
+  .brand-logo-page {
+    padding: 28px 16px 60px;
+  }
+
+  .brand-logo-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .brand-project-info {
+    flex-wrap: wrap;
+  }
+
+  .brand-project-info small {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .brand-logo-card {
+    padding: 18px;
+  }
+
+  .brand-placement-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-logo-preview-area {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .brand-logo-actions {
+    flex-direction: column-reverse;
+  }
+
+  .brand-logo-cancel,
+  .brand-logo-continue {
+    width: 100%;
+    justify-content: center;
+  }
+}
+.brand-logo-error {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-error);
+  border-radius: 8px;
+  background: var(--color-error)/10;
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.brand-logo-continue:disabled,
+.brand-logo-cancel:disabled,
+.brand-logo-back-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

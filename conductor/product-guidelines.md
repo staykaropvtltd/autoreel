@@ -23,8 +23,9 @@ Kaladhar represents artisanal heritage blended with modern digital craftsmanship
   - Accent: Vibrant terracotta saffron (#FF611A).
 
 ### Typography Standard
-- **Primary Body & Headings**: Clean modern sans-serif (Inter, system UI fallback) with tight tracking on headings.
-- **Metadata & Data Labels**: Monospace font (JetBrains Mono, ui-monospace) for durations, resolutions (1080x1920), frame rates (30fps), and prices (₹14,500).
+- **Display & Headings**: Space Grotesk (primary) / Sora (editorial fallback) with tight tracking (`-0.02em` to `-0.03em`) for strong, modern luxury hierarchy.
+- **Body & Data**: Inter (primary) / IBM Plex Sans (fallback) for crisp, readable UI text, descriptions, cards, and interactive forms.
+- **Code & Event Payloads**: JetBrains Mono for durations, resolutions (1080×1920), frame rates (30fps), pricing figures (₹), status chips, and technical payload inspection.
 
 ---
 

@@ -5,7 +5,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from app.core.job_store import create_reel_job, get_analysis_job, get_reel_job
+from app.core.job_store import (
+    create_reel_job,
+    get_analysis_job,
+    get_reel_job,
+    get_template_image,
+)
 from app.core.security import safe_filename
 from app.schemas.batch import BatchClip, SelectionStatus
 from app.schemas.reel import ReelGenerateResponse, ReelResult
@@ -33,7 +38,8 @@ router = APIRouter()
 # Resolved from this file's location (not the process cwd) so the API works
 # the same whether uvicorn/pytest is launched from the repo root or backend/.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-RAW_UPLOADS_DIR = _PROJECT_ROOT / "storage" / "uploads"
+RAW_UPLOADS_DIR = _PROJECT_ROOT / "storage" / "uploads" / "templates"
+TEMPLATE_IMAGES_DIR = _PROJECT_ROOT / "storage" / "templates"
 OUTPUTS_DIR = _PROJECT_ROOT / "storage" / "outputs"
 MUSIC_DIR = _PROJECT_ROOT / "assets" / "music"
 
@@ -89,6 +95,54 @@ def _resolve_source_dir(analysis_job_id: str | None) -> Path:
         raise HTTPException(status_code=404, detail=f"Analysis job not found: {analysis_job_id}")
     return analysis_job["source_dir"]
 
+def _resolve_template_image(analysis_job_id: str | None) -> Path | None:
+    """Resolve the template image selected for an analysis job."""
+
+    if not analysis_job_id:
+        return None
+
+    analysis_job = get_analysis_job(analysis_job_id)
+
+    if analysis_job is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Analysis job not found: {analysis_job_id}",
+        )
+
+    template_id = analysis_job.get("template_id")
+
+    if not template_id:
+        return None
+
+    template_dir = TEMPLATE_IMAGES_DIR / template_id
+
+    if not template_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template image not found: {template_id}",
+        )
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+    template_files = [
+        path
+        for path in template_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in allowed_extensions
+    ]
+
+    if not template_files:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template image file not found: {template_id}",
+        )
+
+    return template_files[0]
+
 
 def _get_candidate_pool(analysis_job_id: str | None) -> list[BatchClip] | None:
     """Best-effort lookup of the analysis job's quality-passed candidate
@@ -102,11 +156,14 @@ def _get_candidate_pool(analysis_job_id: str | None) -> list[BatchClip] | None:
     if analysis_job is None or analysis_job.get("status") != "completed":
         return None
     batch_result = analysis_job["result"]
-    return [
+    candidate_pool = [
         clip
         for clip in batch_result.all_clips
         if clip.status in (SelectionStatus.SELECTED, SelectionStatus.REJECTED_NOT_SELECTED)
     ]
+    if not candidate_pool and batch_result.all_clips:
+        candidate_pool = sorted(batch_result.all_clips, key=lambda c: c.score, reverse=True)
+    return candidate_pool
 
 
 @router.post("/reels/plan", response_model=ReelPlan)
@@ -128,6 +185,8 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
         for clip in batch_result.all_clips
         if clip.status in (SelectionStatus.SELECTED, SelectionStatus.REJECTED_NOT_SELECTED)
     ]
+    if not candidate_pool and batch_result.all_clips:
+        candidate_pool = sorted(batch_result.all_clips, key=lambda c: c.score, reverse=True)
 
     config = PlanningConfig(
         target_duration=request.target_duration,
@@ -173,6 +232,7 @@ def generate_reel(request: GenerateReelRequest) -> ReelGenerateResponse:
     reel_id = str(uuid.uuid4())
     output_filename = safe_filename(request.output_filename or f"reel_{reel_id}.mp4")
     source_dir = _resolve_source_dir(request.analysis_job_id)
+    template_image_path = _resolve_template_image(request.analysis_job_id)
 
     music_path = None
     if request.music_filename:
@@ -226,6 +286,7 @@ def generate_reel(request: GenerateReelRequest) -> ReelGenerateResponse:
                 source_dir=source_dir,
                 output_path=output_path,
                 music_path=music_path,
+                template_image_path=template_image_path,
             )
         else:
             # Unchanged from Phase 5/6: compose_reel raises EmptySelectionError
@@ -234,11 +295,25 @@ def generate_reel(request: GenerateReelRequest) -> ReelGenerateResponse:
                 request.selected_clips, source_dir=source_dir, output_path=output_path, config=config
             )
     except (EmptySelectionError, MissingSourceVideoError, InvalidTimestampError) as exc:
+        import traceback
+        print(f"!!! GENERATE REEL CLIENT ERROR (400): {type(exc).__name__}: {exc}")
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FFmpegNotAvailableError as exc:
+        import traceback
+        print(f"!!! GENERATE REEL FFMPEG NOT AVAILABLE (503): {exc}")
+        traceback.print_exc()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (FFmpegProcessingError, OutputValidationError) as exc:
+        import traceback
+        print(f"!!! GENERATE REEL FFMPEG ERROR (500): {exc}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        import traceback
+        print(f"!!! GENERATE REEL UNHANDLED ERROR: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        raise
 
     response = ReelGenerateResponse(
         **result.model_dump(),

@@ -151,6 +151,8 @@ def plan_reel(candidates: list[BatchClip], config: PlanningConfig | None = None)
     # Hard quality floor: never selected regardless of how much duration
     # budget remains unfilled.
     eligible = [c for c in candidates if c.score >= content_config.min_quality_score]
+    if not eligible and candidates:
+        eligible = sorted(candidates, key=lambda c: c.score, reverse=True)
 
     classified_by_key = {_clip_key(c.clip): c for c in classify_clips(eligible)}
 
@@ -224,6 +226,28 @@ def plan_reel(candidates: list[BatchClip], config: PlanningConfig | None = None)
         accumulated_duration += best_planned_duration
         remaining.remove(best_candidate)
         position += 1
+
+    if not selected and eligible:
+        top = eligible[0]
+        planned_dur = max(1.0, min(top.duration, content_config.target_duration))
+        classified_clip = classified_by_key.get(_clip_key(top))
+        shot_role = classified_clip.shot_role if classified_clip else ShotRole.DETAIL
+        role_conf = classified_clip.role_confidence if classified_clip else 0.5
+        selected.append(
+            PlannedReelClip(
+                position=1,
+                source_file=top.source_file,
+                original_start=top.start_time,
+                original_end=top.end_time,
+                planned_start=top.start_time,
+                planned_end=top.start_time + planned_dur,
+                planned_duration=round(planned_dur, 3),
+                score=top.score,
+                shot_role=shot_role,
+                role_confidence=role_conf,
+            )
+        )
+        accumulated_duration = planned_dur
 
     processing_time_seconds = round(time.perf_counter() - start, 3)
     estimated_duration = round(accumulated_duration, 3)

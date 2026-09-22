@@ -12,7 +12,7 @@ import {
   Eye,
   EyeOff,
   User,
-  Sparkles,
+  Tag,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
@@ -333,7 +333,7 @@ export default function AuthPage({
                       Boutique / Brand Name
                     </label>
                     <div className="relative">
-                      <Sparkles className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-50" />
+                      <Tag className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-50" />
                       <input
                         id="brand-name"
                         type="text"

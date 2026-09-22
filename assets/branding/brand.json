@@ -1,8 +1,9 @@
 {
-    "name": "Kaladhar Auto-Reel",
-    "tagline": "From raw shoot to ready-to-publish Reel in minutes",
-    "logo": "logo.jpeg",
-    "primary_color": "#FC731C",
-    "secondary_color": "#D4AF37",
-    "text_color": "#FAF7F2"
+  "name": "Kaladhar Auto-Reel",
+  "tagline": "From raw shoot to ready-to-publish Reel in minutes",
+  "logo": "logo.jpg",
+  "primary_color": "#FC731C",
+  "secondary_color": "#D4AF37",
+  "text_color": "#FAF7F2",
+  "logo_placement": "start"
 }
