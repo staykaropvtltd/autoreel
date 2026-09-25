@@ -66,6 +66,13 @@ export async function generateReel(
       : `${API_BASE.replace("/api", "")}${data.download_url}`,
   };
 }
+export async function getCredits(): Promise<{ credits: number }> {
+  const response = await axios.get<{ credits: number }>(
+    `${API_BASE}/credits`
+  );
+
+  return response.data;
+}
 
 export async function getReelStatus(reelId: string): Promise<ReelResult> {
   const response = await axios.get<ReelResult>(`${API_BASE}/reels/${reelId}`);
@@ -99,6 +106,20 @@ export async function uploadMusic(file: File): Promise<void> {
 
   await axios.post(
     `${API_BASE}/music/upload`,
+    formData,
+  );
+}
+export async function uploadBrandLogo(
+  file: File,
+  placement: "start" | "entire"
+): Promise<void> {
+  const formData = new FormData();
+
+  formData.append("file", file);
+  formData.append("placement", placement);
+
+  await axios.post(
+    `${API_BASE}/branding/logo`,
     formData,
   );
 }

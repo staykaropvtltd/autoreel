@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import analysis, branding, health, music, reels, thumbnails, videos, templates
 from app.core.config import get_settings
+from app.api import credits
 
 settings = get_settings()
 
@@ -29,3 +30,4 @@ app.include_router(thumbnails.router, prefix="/api")
 app.include_router(music.router, prefix="/api")
 app.include_router(branding.router, prefix="/api")
 app.include_router(templates.router, prefix="/api")
+app.include_router(credits.router, prefix="/api")

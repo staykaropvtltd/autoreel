@@ -5,6 +5,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.services.credit_service import (
+    get_balance,
+    deduct_credits,
+    refund_credits,
+    REEL_GENERATION_COST,
+)
+
 from app.core.job_store import (
     create_reel_job,
     get_analysis_job,
@@ -15,7 +22,10 @@ from app.core.security import safe_filename
 from app.schemas.batch import BatchClip, SelectionStatus
 from app.schemas.reel import ReelGenerateResponse, ReelResult
 from app.schemas.story import ReelPlan
-from app.services.ffmpeg_service import FFmpegNotAvailableError, FFmpegProcessingError
+from app.services.ffmpeg_service import (
+    FFmpegNotAvailableError,
+    FFmpegProcessingError,
+)
 from app.services.reel_composer import (
     BrandConfig,
     EmptySelectionError,
@@ -25,23 +35,41 @@ from app.services.reel_composer import (
     ReelCompositionConfig,
     compose_reel,
 )
-from app.services.brand_service import get_brand_config, get_brand_logo_path, get_brand_name
+from app.services.brand_service import (
+    get_brand_config,
+    get_brand_logo_path,
+    get_brand_name,
+)
 from app.services.reel_editor_renderer import compose_reel_from_editor_plan
-from app.services.reel_planner import PlanningConfig, extend_plan_for_transitions, plan_reel
+from app.services.reel_planner import (
+    PlanningConfig,
+    extend_plan_for_transitions,
+    plan_reel,
+)
 from app.services.thumbnail_service import attach_thumbnails
 from app.services.video_processor import OutputValidationError
 
-THUMBNAIL_CACHE_DIR = Path(__file__).resolve().parents[3] / "storage" / "temp" / "thumbnails"
+
+THUMBNAIL_CACHE_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "storage"
+    / "temp"
+    / "thumbnails"
+)
 
 router = APIRouter()
 
 # Resolved from this file's location (not the process cwd) so the API works
 # the same whether uvicorn/pytest is launched from the repo root or backend/.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 RAW_UPLOADS_DIR = _PROJECT_ROOT / "storage" / "uploads" / "templates"
 TEMPLATE_IMAGES_DIR = _PROJECT_ROOT / "storage" / "templates"
 OUTPUTS_DIR = _PROJECT_ROOT / "storage" / "outputs"
 MUSIC_DIR = _PROJECT_ROOT / "assets" / "music"
+
+# Temporary user ID until authentication is implemented
+DEMO_USER_ID = "user_demo"
 
 
 class BrandRequest(BaseModel):
@@ -91,9 +119,15 @@ def _resolve_source_dir(analysis_job_id: str | None) -> Path:
         return RAW_UPLOADS_DIR
 
     analysis_job = get_analysis_job(analysis_job_id)
+
     if analysis_job is None:
-        raise HTTPException(status_code=404, detail=f"Analysis job not found: {analysis_job_id}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Analysis job not found: {analysis_job_id}",
+        )
+
     return analysis_job["source_dir"]
+
 
 def _resolve_template_image(analysis_job_id: str | None) -> Path | None:
     """Resolve the template image selected for an analysis job."""
@@ -144,7 +178,9 @@ def _resolve_template_image(analysis_job_id: str | None) -> Path | None:
     return template_files[0]
 
 
-def _get_candidate_pool(analysis_job_id: str | None) -> list[BatchClip] | None:
+def _get_candidate_pool(
+    analysis_job_id: str | None,
+) -> list[BatchClip] | None:
     """Best-effort lookup of the analysis job's quality-passed candidate
     pool, used to top up a plan that would otherwise render short of its
     target duration (Phase 9 section 5). Returns None (not an error) when
@@ -152,17 +188,31 @@ def _get_candidate_pool(analysis_job_id: str | None) -> list[BatchClip] | None:
     """
     if not analysis_job_id:
         return None
+
     analysis_job = get_analysis_job(analysis_job_id)
+
     if analysis_job is None or analysis_job.get("status") != "completed":
         return None
+
     batch_result = analysis_job["result"]
+
     candidate_pool = [
         clip
         for clip in batch_result.all_clips
-        if clip.status in (SelectionStatus.SELECTED, SelectionStatus.REJECTED_NOT_SELECTED)
+        if clip.status
+        in (
+            SelectionStatus.SELECTED,
+            SelectionStatus.REJECTED_NOT_SELECTED,
+        )
     ]
+
     if not candidate_pool and batch_result.all_clips:
-        candidate_pool = sorted(batch_result.all_clips, key=lambda c: c.score, reverse=True)
+        candidate_pool = sorted(
+            batch_result.all_clips,
+            key=lambda c: c.score,
+            reverse=True,
+        )
+
     return candidate_pool
 
 
@@ -173,20 +223,39 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
     clips - not just its own max-clips-capped selection). Returned for the
     frontend to display/reorder/trim before generation.
     """
+
     analysis_job = get_analysis_job(request.analysis_job_id)
+
     if analysis_job is None:
-        raise HTTPException(status_code=404, detail=f"Analysis job not found: {request.analysis_job_id}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Analysis job not found: {request.analysis_job_id}",
+        )
+
     if analysis_job.get("status") != "completed":
-        raise HTTPException(status_code=400, detail="Analysis job has not completed yet")
+        raise HTTPException(
+            status_code=400,
+            detail="Analysis job has not completed yet",
+        )
 
     batch_result = analysis_job["result"]
+
     candidate_pool = [
         clip
         for clip in batch_result.all_clips
-        if clip.status in (SelectionStatus.SELECTED, SelectionStatus.REJECTED_NOT_SELECTED)
+        if clip.status
+        in (
+            SelectionStatus.SELECTED,
+            SelectionStatus.REJECTED_NOT_SELECTED,
+        )
     ]
+
     if not candidate_pool and batch_result.all_clips:
-        candidate_pool = sorted(batch_result.all_clips, key=lambda c: c.score, reverse=True)
+        candidate_pool = sorted(
+            batch_result.all_clips,
+            key=lambda c: c.score,
+            reverse=True,
+        )
 
     config = PlanningConfig(
         target_duration=request.target_duration,
@@ -194,6 +263,7 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
         max_clip_duration=request.max_clip_duration,
         min_quality_score=request.min_quality_score,
     )
+
     reel_plan = plan_reel(candidate_pool, config)
 
     # The editor should already show the real, currently-configured brand
@@ -203,12 +273,17 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
     # is purely about what the editor displays before that point).
     brand_config = get_brand_config()
     brand_logo_path = get_brand_logo_path()
+
     reel_plan = reel_plan.model_copy(
         update={
             "branding": reel_plan.branding.model_copy(
                 update={
                     "brand_name": brand_config.name,
-                    "logo_path": str(brand_logo_path) if brand_logo_path else None,
+                    "logo_path": (
+                        str(brand_logo_path)
+                        if brand_logo_path
+                        else None
+                    ),
                 }
             )
         }
@@ -220,65 +295,158 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
     # user can still turn it off in the editor.
     if reel_plan.overlays.brand_placement == "beginning":
         reel_plan = reel_plan.model_copy(
-            update={"overlays": reel_plan.overlays.model_copy(update={"brand_placement": "watermark"})}
+            update={
+                "overlays": reel_plan.overlays.model_copy(
+                    update={
+                        "brand_placement": "watermark"
+                    }
+                )
+            }
         )
 
-    attach_thumbnails(reel_plan.clips, analysis_job["source_dir"], THUMBNAIL_CACHE_DIR)
+    attach_thumbnails(
+        reel_plan.clips,
+        analysis_job["source_dir"],
+        THUMBNAIL_CACHE_DIR,
+    )
+
     return reel_plan
 
 
-@router.post("/reels/generate", response_model=ReelGenerateResponse)
-def generate_reel(request: GenerateReelRequest) -> ReelGenerateResponse:
+@router.post(
+    "/reels/generate",
+    response_model=ReelGenerateResponse,
+)
+def generate_reel(
+    request: GenerateReelRequest,
+) -> ReelGenerateResponse:
+
     reel_id = str(uuid.uuid4())
-    output_filename = safe_filename(request.output_filename or f"reel_{reel_id}.mp4")
-    source_dir = _resolve_source_dir(request.analysis_job_id)
-    template_image_path = _resolve_template_image(request.analysis_job_id)
+
+    output_filename = safe_filename(
+        request.output_filename
+        or f"reel_{reel_id}.mp4"
+    )
+
+    source_dir = _resolve_source_dir(
+        request.analysis_job_id
+    )
+
+    template_image_path = _resolve_template_image(
+        request.analysis_job_id
+    )
 
     music_path = None
+
     if request.music_filename:
-        music_path = MUSIC_DIR / safe_filename(request.music_filename)
+        music_path = (
+            MUSIC_DIR
+            / safe_filename(request.music_filename)
+        )
+
         if not music_path.exists():
-            raise HTTPException(status_code=400, detail=f"Music file not found: {music_path}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Music file not found: {music_path}",
+            )
 
     config = ReelCompositionConfig(
         min_total_duration=request.min_total_duration,
         max_total_duration=request.max_total_duration,
         transition=request.transition,
         music_path=music_path,
-        brand=BrandConfig(**request.brand.model_dump()),
-        product=ProductInfo(**request.product.model_dump()) if request.product else None,
+        brand=BrandConfig(
+            **request.brand.model_dump()
+        ),
+        product=(
+            ProductInfo(
+                **request.product.model_dump()
+            )
+            if request.product
+            else None
+        ),
     )
 
     output_path = OUTPUTS_DIR / output_filename
 
+    # ============================================================
+    # CREDIT CHECK & DEDUCTION
+    # ============================================================
+
     try:
+        deduct_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    # ============================================================
+    # REEL GENERATION
+    # ============================================================
+
+    try:
+
         if request.reel_plan is not None:
-            # Phase 8: the ReelPlan is the single source of truth (clip
-            # order/trims/transitions/branding/product overlays all live on
-            # it) - the outer request-level brand/product/transition fields
-            # above are irrelevant on this path and only apply to the
-            # legacy selected_clips path below.
-            #
+
+            # Phase 8: the ReelPlan is the single source of truth
+            # (clip order/trims/transitions/branding/product overlays
+            # all live on it) - the outer request-level brand/product/
+            # transition fields above are irrelevant on this path and
+            # only apply to the legacy selected_clips path below.
+
             # Phase 9 critical fix: transitions must not shrink the Reel
             # below its target duration. Top up the plan (existing-clip
             # slack first, then extra candidates from the analysis pool)
             # before rendering, so this stays a single render pass.
-            candidate_pool = _get_candidate_pool(request.analysis_job_id)
-            compensated_plan = extend_plan_for_transitions(request.reel_plan, candidate_pool)
+            candidate_pool = _get_candidate_pool(
+                request.analysis_job_id
+            )
 
-            # Phase 9 security: reel_plan.music.source_path arrives from the
-            # client as JSON, so it must never be trusted as a real
+            compensated_plan = extend_plan_for_transitions(
+                request.reel_plan,
+                candidate_pool,
+            )
+
+            # Phase 9 security: reel_plan.music.source_path arrives from
+            # the client as JSON, so it must never be trusted as a real
             # filesystem path. Re-resolve it against MUSIC_DIR by filename
             # only (stripping any directory components), same as the
             # legacy music_filename field just above.
             if compensated_plan.music is not None:
-                resolved_music_path = MUSIC_DIR / safe_filename(Path(compensated_plan.music.source_path).name)
+
+                resolved_music_path = (
+                    MUSIC_DIR
+                    / safe_filename(
+                        Path(
+                            compensated_plan.music.source_path
+                        ).name
+                    )
+                )
+
                 if not resolved_music_path.exists():
                     raise HTTPException(
-                        status_code=400, detail=f"Music file not found: {resolved_music_path.name}"
+                        status_code=400,
+                        detail=(
+                            "Music file not found: "
+                            f"{resolved_music_path.name}"
+                        ),
                     )
+
                 compensated_plan = compensated_plan.model_copy(
-                    update={"music": compensated_plan.music.model_copy(update={"source_path": str(resolved_music_path)})}
+                    update={
+                        "music": compensated_plan.music.model_copy(
+                            update={
+                                "source_path": str(
+                                    resolved_music_path
+                                )
+                            }
+                        )
+                    }
                 )
 
             result: ReelResult = compose_reel_from_editor_plan(
@@ -288,32 +456,118 @@ def generate_reel(request: GenerateReelRequest) -> ReelGenerateResponse:
                 music_path=music_path,
                 template_image_path=template_image_path,
             )
+
         else:
-            # Unchanged from Phase 5/6: compose_reel raises EmptySelectionError
-            # itself (message contains "empty") when selected_clips is [].
+
+            # Unchanged from Phase 5/6: compose_reel raises
+            # EmptySelectionError itself (message contains "empty")
+            # when selected_clips is [].
             result = compose_reel(
-                request.selected_clips, source_dir=source_dir, output_path=output_path, config=config
+                request.selected_clips,
+                source_dir=source_dir,
+                output_path=output_path,
+                config=config,
             )
-    except (EmptySelectionError, MissingSourceVideoError, InvalidTimestampError) as exc:
+
+    # ============================================================
+    # GENERATION FAILED → REFUND CREDITS
+    # ============================================================
+
+    except (
+        EmptySelectionError,
+        MissingSourceVideoError,
+        InvalidTimestampError,
+    ) as exc:
+
         import traceback
-        print(f"!!! GENERATE REEL CLIENT ERROR (400): {type(exc).__name__}: {exc}")
+
+        print(
+            "!!! GENERATE REEL CLIENT ERROR (400): "
+            f"{type(exc).__name__}: {exc}"
+        )
+
         traceback.print_exc()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        # Refund because reel generation failed
+        refund_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
     except FFmpegNotAvailableError as exc:
+
         import traceback
-        print(f"!!! GENERATE REEL FFMPEG NOT AVAILABLE (503): {exc}")
+
+        print(
+            "!!! GENERATE REEL FFMPEG NOT AVAILABLE (503): "
+            f"{exc}"
+        )
+
         traceback.print_exc()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except (FFmpegProcessingError, OutputValidationError) as exc:
+
+        # Refund because reel generation failed
+        refund_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+
+    except (
+        FFmpegProcessingError,
+        OutputValidationError,
+    ) as exc:
+
         import traceback
-        print(f"!!! GENERATE REEL FFMPEG ERROR (500): {exc}")
+
+        print(
+            "!!! GENERATE REEL FFMPEG ERROR (500): "
+            f"{exc}"
+        )
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        # Refund because reel generation failed
+        refund_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc
+
     except Exception as exc:
+
         import traceback
-        print(f"!!! GENERATE REEL UNHANDLED ERROR: {type(exc).__name__}: {exc}")
+
+        print(
+            "!!! GENERATE REEL UNHANDLED ERROR: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
         traceback.print_exc()
+
+        # Refund because reel generation failed
+        refund_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
+        )
+
         raise
+
+    # ============================================================
+    # GENERATION SUCCESS
+    # ============================================================
 
     response = ReelGenerateResponse(
         **result.model_dump(),
@@ -321,26 +575,61 @@ def generate_reel(request: GenerateReelRequest) -> ReelGenerateResponse:
         status="completed",
         download_url=f"/api/reels/{reel_id}/download",
     )
-    create_reel_job(reel_id, response.model_dump())
+
+    create_reel_job(
+        reel_id,
+        response.model_dump(),
+    )
+
     return response
 
 
-@router.get("/reels/{reel_id}", response_model=ReelGenerateResponse)
-def get_reel(reel_id: str) -> ReelGenerateResponse:
+@router.get(
+    "/reels/{reel_id}",
+    response_model=ReelGenerateResponse,
+)
+def get_reel(
+    reel_id: str,
+) -> ReelGenerateResponse:
+
     job = get_reel_job(reel_id)
+
     if job is None:
-        raise HTTPException(status_code=404, detail=f"Reel not found: {reel_id}")
-    return ReelGenerateResponse(**job["response"])
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reel not found: {reel_id}",
+        )
+
+    return ReelGenerateResponse(
+        **job["response"]
+    )
 
 
 @router.get("/reels/{reel_id}/download")
-def download_reel(reel_id: str) -> FileResponse:
+def download_reel(
+    reel_id: str,
+) -> FileResponse:
+
     job = get_reel_job(reel_id)
+
     if job is None:
-        raise HTTPException(status_code=404, detail=f"Reel not found: {reel_id}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reel not found: {reel_id}",
+        )
 
-    output_path = Path(job["response"]["output_path"])
+    output_path = Path(
+        job["response"]["output_path"]
+    )
+
     if not output_path.exists():
-        raise HTTPException(status_code=404, detail=f"Reel file not found: {output_path}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reel file not found: {output_path}",
+        )
 
-    return FileResponse(output_path, media_type="video/mp4")
+    return FileResponse(
+        path=output_path,
+        media_type="video/mp4",
+        filename=output_path.name,
+    )

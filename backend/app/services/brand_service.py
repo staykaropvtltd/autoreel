@@ -172,3 +172,29 @@ def get_logo_placement() -> str:
         return "start"
 
     return placement
+def set_logo_placement(placement: str) -> None:
+    """Updates only the saved logo placement."""
+
+    if placement not in {"start", "entire"}:
+        raise ValueError(
+            "Logo placement must be 'start' or 'entire'"
+        )
+
+    try:
+        raw = json.loads(
+            BRAND_CONFIG_PATH.read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError):
+        raw = {}
+
+    raw["logo_placement"] = placement
+
+    BRAND_CONFIG_PATH.write_text(
+        json.dumps(
+            raw,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )

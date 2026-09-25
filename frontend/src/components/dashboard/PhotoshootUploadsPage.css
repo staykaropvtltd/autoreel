@@ -1,0 +1,1113 @@
+/* =========================================================
+   PHOTOSHOOT UPLOADS / VIDEO GENERATION PAGE
+   RESPONSIVE STYLES
+   Desktop UI remains unchanged
+   ========================================================= */
+
+
+/* =========================================================
+   TABLET
+   ========================================================= */
+
+@media (max-width: 1024px) {
+
+  /* ---------- PAGE ---------- */
+
+  .photoshoot-page {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    padding-left: 12px;
+    padding-right: 12px;
+    box-sizing: border-box;
+  }
+
+
+  /* ---------- HEADER ---------- */
+
+  .photoshoot-header {
+    padding: 0 4px;
+  }
+
+
+  /* ---------- MAIN LAYOUT ---------- */
+
+  .photoshoot-page .grid.grid-cols-1.lg\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  .photoshoot-page .lg\:col-span-2 {
+    grid-column: span 1 !important;
+  }
+
+
+  /* ---------- UPLOAD AREA ---------- */
+
+  .photoshoot-upload-area {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+
+  /* ---------- FILE GRID ---------- */
+
+  .photoshoot-files-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+
+  /* ---------- SPOTIFY ---------- */
+
+  .spotify-track-card {
+    min-width: 0;
+  }
+}
+
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 640px) {
+
+  /* =======================================================
+     GLOBAL MOBILE RESET
+     ======================================================= */
+
+  .photoshoot-page {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+
+    padding: 0 14px 30px !important;
+
+    overflow-x: hidden !important;
+
+    box-sizing: border-box;
+  }
+
+  .photoshoot-page *,
+  .photoshoot-page *::before,
+  .photoshoot-page *::after {
+    box-sizing: border-box;
+  }
+
+  .photoshoot-page img,
+  .photoshoot-page video,
+  .photoshoot-page canvas {
+    max-width: 100%;
+  }
+
+
+  /* =======================================================
+     HEADER
+     ======================================================= */
+
+  .photoshoot-header {
+    width: 100%;
+    padding: 14px 0 16px !important;
+    margin-bottom: 14px !important;
+  }
+
+  .photoshoot-eyebrow {
+    font-size: 9px !important;
+    line-height: 1.3;
+    letter-spacing: 0.1em !important;
+  }
+
+  .photoshoot-header h1 {
+    font-size: clamp(23px, 7vw, 28px) !important;
+    line-height: 1.12 !important;
+    letter-spacing: -0.02em;
+    margin-top: 6px;
+  }
+
+  .photoshoot-header p {
+    max-width: 100% !important;
+
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+
+    margin-top: 8px;
+  }
+
+
+  /* =======================================================
+     STEP BREADCRUMBS
+     ======================================================= */
+
+  .photoshoot-page > .flex.items-center.gap-3.mb-8 {
+    width: 100% !important;
+
+    display: flex !important;
+    align-items: center !important;
+
+    gap: 7px !important;
+
+    margin-bottom: 18px !important;
+
+    padding: 3px 0 9px !important;
+
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+
+    white-space: nowrap !important;
+
+    scrollbar-width: none;
+
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .photoshoot-page > .flex.items-center.gap-3.mb-8::-webkit-scrollbar {
+    display: none;
+  }
+
+  .photoshoot-page > .flex.items-center.gap-3.mb-8 button {
+    flex: 0 0 auto !important;
+
+    min-height: 32px !important;
+
+    padding: 7px 10px !important;
+
+    font-size: 8px !important;
+
+    white-space: nowrap !important;
+  }
+
+  .photoshoot-page > .flex.items-center.gap-3.mb-8 > span {
+    flex: 0 0 auto !important;
+  }
+
+
+  /* =======================================================
+     MAIN LAYOUT
+     ======================================================= */
+
+  .photoshoot-page .grid.grid-cols-1.lg\:grid-cols-3 {
+    display: flex !important;
+    flex-direction: column !important;
+
+    width: 100% !important;
+
+    gap: 18px !important;
+  }
+
+  .photoshoot-page .lg\:col-span-2 {
+    width: 100% !important;
+
+    grid-column: auto !important;
+
+    min-width: 0 !important;
+  }
+
+
+  /* =======================================================
+     UPLOAD AREA
+     ======================================================= */
+
+  .photoshoot-upload-area {
+    width: 100% !important;
+
+    min-height: 285px !important;
+
+    padding: 30px 18px !important;
+
+    border-radius: 16px !important;
+
+    text-align: center;
+  }
+
+  .photoshoot-upload-icon {
+    width: 58px !important;
+    height: 58px !important;
+
+    margin: 0 auto 16px !important;
+  }
+
+  .photoshoot-upload-icon svg {
+    width: 27px !important;
+    height: 27px !important;
+  }
+
+  .photoshoot-upload-area h2 {
+    font-size: 20px !important;
+    line-height: 1.25 !important;
+
+    margin-bottom: 9px !important;
+  }
+
+  .photoshoot-upload-area p {
+    max-width: 290px !important;
+
+    margin: 0 auto 17px !important;
+
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+  }
+
+  .photoshoot-select-button {
+    display: inline-flex !important;
+
+    align-items: center;
+    justify-content: center;
+
+    width: 100% !important;
+    max-width: 270px !important;
+
+    min-height: 44px !important;
+
+    padding: 12px 16px !important;
+
+    font-size: 10px !important;
+    font-weight: 700;
+
+    border-radius: 8px;
+  }
+
+  .photoshoot-upload-hint {
+    display: block;
+
+    max-width: 290px;
+
+    margin: 12px auto 0 !important;
+
+    font-size: 9px !important;
+    line-height: 1.5 !important;
+  }
+
+
+  /* =======================================================
+     PHOTO HANDOFF BANNER
+     ======================================================= */
+
+  .photoshoot-page .bg-gradient-to-r {
+    width: 100% !important;
+
+    overflow: hidden;
+  }
+
+
+  /* =======================================================
+     FILE SECTION
+     ======================================================= */
+
+  .photoshoot-files-section {
+    width: 100% !important;
+  }
+
+  .photoshoot-files-header {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    align-items: flex-start !important;
+
+    gap: 9px !important;
+  }
+
+  .photoshoot-files-header h2 {
+    font-size: 15px !important;
+    line-height: 1.3;
+  }
+
+  .photoshoot-files-header p {
+    font-size: 10px !important;
+    line-height: 1.5;
+  }
+
+  .photoshoot-clear-button {
+    width: 100% !important;
+
+    min-height: 42px;
+  }
+
+
+  /* =======================================================
+     FILE GRID
+     ======================================================= */
+
+  .photoshoot-files-grid {
+    display: grid !important;
+
+    grid-template-columns: 1fr !important;
+
+    gap: 12px !important;
+
+    width: 100%;
+  }
+
+  .photoshoot-file-card {
+    width: 100% !important;
+
+    min-width: 0;
+  }
+
+  .photoshoot-file-preview {
+    width: 100% !important;
+
+    height: auto !important;
+
+    aspect-ratio: 16 / 9;
+  }
+
+  .photoshoot-file-info {
+    padding: 11px !important;
+  }
+
+  .photoshoot-file-info strong {
+    display: block;
+
+    font-size: 11px !important;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .photoshoot-file-info span {
+    font-size: 10px !important;
+  }
+
+
+  /* =======================================================
+     COLLECTION DETAILS
+     ======================================================= */
+
+  .photoshoot-page .space-y-6 > .p-5 {
+    padding: 16px !important;
+  }
+
+
+  /* Category + Price */
+
+  .photoshoot-page .grid.grid-cols-2 {
+    grid-template-columns: 1fr !important;
+
+    gap: 12px !important;
+  }
+
+
+  /* Duration */
+
+  .photoshoot-page .grid.grid-cols-3 {
+    grid-template-columns: repeat(3, 1fr) !important;
+
+    gap: 7px !important;
+  }
+
+  .photoshoot-page .grid.grid-cols-3 button {
+    min-height: 40px !important;
+
+    padding: 8px 4px !important;
+
+    font-size: 8px !important;
+  }
+
+
+  /* =======================================================
+     FORM CONTROLS
+     ======================================================= */
+
+  .photoshoot-page input,
+  .photoshoot-page select {
+    width: 100% !important;
+
+    max-width: 100% !important;
+
+    min-height: 42px !important;
+
+    font-size: 11px !important;
+  }
+
+
+  /* =======================================================
+     GENERAL BUTTONS
+     ======================================================= */
+
+  .photoshoot-page button {
+    max-width: 100%;
+
+    min-height: 42px;
+  }
+
+  .photoshoot-page button.w-full.py-4 {
+    min-height: 46px !important;
+
+    padding: 12px 14px !important;
+
+    font-size: 11px !important;
+  }
+
+
+  /* =======================================================
+     STUDIO PAGE
+     ======================================================= */
+
+
+  /* ---------- VIDEO INSPECTOR ---------- */
+
+  .photoshoot-page video {
+    display: block;
+
+    width: 100% !important;
+    max-width: 100% !important;
+
+    height: auto !important;
+
+    border-radius: 10px;
+  }
+
+  .photoshoot-page .sm\:flex-row {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    align-items: stretch !important;
+
+    gap: 12px !important;
+  }
+
+  .photoshoot-page .sm\:w-48 {
+    width: 100% !important;
+  }
+
+  .photoshoot-page .sm\:w-48.h-32 {
+    width: 100% !important;
+
+    height: auto !important;
+
+    aspect-ratio: 16 / 9;
+  }
+
+
+  /* ---------- STAGED VIDEO ---------- */
+
+  .photoshoot-page .max-h-\[400px\] {
+    max-height: none !important;
+
+    overflow-y: visible !important;
+  }
+
+  .photoshoot-page .max-h-\[360px\] {
+    max-height: none !important;
+
+    overflow-y: visible !important;
+  }
+
+
+  /* Clip rows */
+
+  .photoshoot-page .max-h-\[400px\] > div {
+    gap: 9px !important;
+
+    padding: 10px !important;
+  }
+
+
+  /* Clip score */
+
+  .photoshoot-page .max-h-\[400px\] .text-xl {
+    font-size: 17px !important;
+  }
+
+
+  /* =======================================================
+     SPOTIFY HUB
+     ======================================================= */
+
+  .spotify-hub {
+    width: 100% !important;
+
+    max-width: 100% !important;
+
+    overflow: hidden !important;
+
+    border-radius: 16px !important;
+  }
+
+  .spotify-hub-header {
+    padding: 16px !important;
+  }
+
+  .spotify-hub-title-row {
+    display: flex !important;
+
+    align-items: flex-start !important;
+
+    flex-wrap: wrap !important;
+
+    gap: 9px !important;
+  }
+
+  .spotify-hub-title {
+    font-size: 15px !important;
+
+    line-height: 1.3 !important;
+  }
+
+  .spotify-hub-subtitle {
+    font-size: 9px !important;
+
+    line-height: 1.45 !important;
+  }
+
+  .spotify-powered-badge {
+    font-size: 7px !important;
+
+    margin-left: 0 !important;
+
+    padding: 5px 7px !important;
+  }
+
+
+  /* =======================================================
+     SPOTIFY TABS
+     ======================================================= */
+
+  .spotify-tab-bar {
+    display: flex !important;
+
+    width: 100% !important;
+
+    overflow-x: auto !important;
+
+    scrollbar-width: none;
+  }
+
+  .spotify-tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .spotify-tab {
+    flex: 1 0 33.333% !important;
+
+    min-width: 88px !important;
+
+    min-height: 42px !important;
+
+    display: flex !important;
+
+    align-items: center !important;
+    justify-content: center !important;
+
+    padding: 10px 6px !important;
+
+    font-size: 9px !important;
+
+    white-space: nowrap;
+  }
+
+
+  /* =======================================================
+     SPOTIFY SEARCH
+     ======================================================= */
+
+  .spotify-search-row {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    gap: 9px !important;
+
+    padding: 12px !important;
+  }
+
+  .spotify-search-input-wrap {
+    width: 100% !important;
+
+    min-width: 0 !important;
+  }
+
+  .spotify-search-input {
+    width: 100% !important;
+
+    min-height: 42px !important;
+
+    padding: 10px 12px !important;
+
+    font-size: 11px !important;
+  }
+
+  .spotify-search-row label {
+    width: 100% !important;
+
+    min-height: 42px !important;
+
+    justify-content: center !important;
+  }
+
+
+  /* =======================================================
+     MOOD FILTERS
+     ======================================================= */
+
+  .spotify-mood-pills {
+    display: flex !important;
+
+    flex-wrap: nowrap !important;
+
+    overflow-x: auto !important;
+
+    gap: 7px !important;
+
+    padding: 4px 12px 10px !important;
+
+    scrollbar-width: none;
+
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .spotify-mood-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .spotify-mood-pill {
+    flex: 0 0 auto !important;
+
+    min-height: 32px !important;
+
+    padding: 7px 11px !important;
+
+    font-size: 8px !important;
+
+    white-space: nowrap;
+  }
+
+
+  /* =======================================================
+     MUSIC TRACK LIST
+     ======================================================= */
+
+  .spotify-track-list {
+    width: 100% !important;
+
+    padding: 0 10px 10px !important;
+  }
+
+
+  /* Individual track */
+
+  .spotify-track-card {
+    display: grid !important;
+
+    grid-template-columns: 50px minmax(0, 1fr) auto !important;
+
+    align-items: center !important;
+
+    gap: 10px !important;
+
+    width: 100% !important;
+
+    min-height: 68px !important;
+
+    padding: 9px !important;
+
+    border-radius: 10px !important;
+  }
+
+
+  /* Album */
+
+  .spotify-album-art {
+    width: 50px !important;
+
+    height: 50px !important;
+
+    border-radius: 8px !important;
+  }
+
+
+  /* Track name */
+
+  .spotify-track-name {
+    display: block;
+
+    max-width: 100%;
+
+    font-size: 10px !important;
+
+    line-height: 1.35 !important;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+
+    white-space: nowrap;
+  }
+
+
+  /* Artist */
+
+  .spotify-track-artist {
+    font-size: 8px !important;
+
+    line-height: 1.3;
+
+    margin-top: 3px;
+  }
+
+
+  /* Tags */
+
+  .spotify-mood-tags {
+    display: flex !important;
+
+    flex-wrap: nowrap !important;
+
+    overflow: hidden !important;
+
+    gap: 4px !important;
+
+    margin-top: 4px;
+  }
+
+  .spotify-mood-tag,
+  .spotify-bpm-tag {
+    flex: 0 0 auto;
+
+    font-size: 6.5px !important;
+
+    padding: 3px 5px !important;
+
+    white-space: nowrap;
+  }
+
+
+  /* Duration */
+
+  .spotify-track-duration {
+    font-size: 8px !important;
+
+    white-space: nowrap;
+  }
+
+
+  /* =======================================================
+     AUDIO CUTTER
+     ======================================================= */
+
+  .spotify-cutter-section {
+    width: 100% !important;
+
+    padding: 14px !important;
+
+    overflow: hidden !important;
+  }
+
+  .spotify-cutter-header {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    align-items: flex-start !important;
+
+    gap: 8px !important;
+  }
+
+  .spotify-cut-summary {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    align-items: flex-start !important;
+
+    gap: 4px !important;
+  }
+
+
+  /* =======================================================
+     LINK IMPORT
+     ======================================================= */
+
+  .spotify-link-tab .flex.gap-2 {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    gap: 9px !important;
+  }
+
+  .spotify-link-tab button {
+    width: 100% !important;
+
+    min-height: 42px !important;
+  }
+
+
+  /* =======================================================
+     BRAND WATERMARK
+     ======================================================= */
+
+  .photoshoot-page .p-5 {
+    padding: 16px !important;
+  }
+
+  .photoshoot-page .p-3 {
+    padding: 12px !important;
+  }
+
+
+  /* Logo */
+
+  .photoshoot-page .w-14.h-14 {
+    width: 54px !important;
+
+    height: 54px !important;
+  }
+
+
+  /* Logo placement */
+
+  .photoshoot-page .grid.grid-cols-2.gap-2 {
+    grid-template-columns: 1fr !important;
+
+    gap: 8px !important;
+  }
+
+
+  /* =======================================================
+     REEL SETTINGS
+     ======================================================= */
+
+  .photoshoot-page .space-y-6 > .p-5 {
+    border-radius: 14px;
+  }
+
+  .photoshoot-page .grid.grid-cols-2 {
+    grid-template-columns: 1fr !important;
+
+    gap: 11px !important;
+  }
+
+
+  /* Collection title */
+
+  .photoshoot-page input {
+    min-height: 42px !important;
+
+    border-radius: 8px;
+  }
+
+
+  /* Category */
+
+  .photoshoot-page select {
+    min-height: 42px !important;
+
+    border-radius: 8px;
+  }
+
+
+  /* Duration buttons */
+
+  .photoshoot-page .grid.grid-cols-3 {
+    grid-template-columns: repeat(3, 1fr) !important;
+
+    gap: 7px !important;
+  }
+
+  .photoshoot-page .grid.grid-cols-3 button {
+    min-height: 40px !important;
+
+    padding: 8px 3px !important;
+
+    font-size: 8px !important;
+  }
+
+
+  /* =======================================================
+     GENERATED REEL
+     ======================================================= */
+
+  #ready-reel-section {
+    width: 100% !important;
+
+    padding: 18px 14px !important;
+
+    gap: 18px !important;
+
+    border-radius: 16px !important;
+  }
+
+
+  /* Reel preview */
+
+  #ready-reel-section > div:first-child {
+    width: min(220px, 72vw) !important;
+
+    height: auto !important;
+
+    aspect-ratio: 9 / 16;
+
+    margin: 0 auto;
+  }
+
+
+  /* Heading */
+
+  #ready-reel-section h2 {
+    font-size: 21px !important;
+
+    line-height: 1.2 !important;
+  }
+
+
+  /* Action buttons */
+
+  #ready-reel-section .flex.flex-wrap {
+    display: flex !important;
+
+    flex-direction: column !important;
+
+    width: 100% !important;
+
+    gap: 8px !important;
+  }
+
+  #ready-reel-section a,
+  #ready-reel-section button {
+    width: 100% !important;
+
+    min-height: 44px !important;
+
+    justify-content: center !important;
+  }
+
+
+  /* =======================================================
+     GENERATION PROGRESS
+     ======================================================= */
+
+  .photoshoot-page .max-w-lg {
+    width: 100% !important;
+
+    max-width: 100% !important;
+  }
+
+  .photoshoot-page .grid.grid-cols-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+
+    gap: 10px !important;
+
+    text-align: center;
+  }
+
+
+  /* =======================================================
+     MOBILE SAFETY
+     ======================================================= */
+
+  .photoshoot-page input,
+  .photoshoot-page select,
+  .photoshoot-page button {
+    max-width: 100%;
+  }
+
+  .photoshoot-page img,
+  .photoshoot-page video {
+    max-width: 100%;
+  }
+}
+
+
+/* =========================================================
+   EXTRA SMALL PHONES
+   360px AND BELOW
+   ========================================================= */
+
+@media (max-width: 360px) {
+
+  .photoshoot-page {
+    padding-left: 11px !important;
+    padding-right: 11px !important;
+  }
+
+
+  /* Header */
+
+  .photoshoot-header h1 {
+    font-size: 22px !important;
+  }
+
+  .photoshoot-header p {
+    font-size: 11px !important;
+  }
+
+
+  /* Upload */
+
+  .photoshoot-upload-area {
+    min-height: 265px !important;
+
+    padding: 26px 14px !important;
+  }
+
+  .photoshoot-upload-area h2 {
+    font-size: 18px !important;
+  }
+
+  .photoshoot-upload-area p {
+    font-size: 11px !important;
+  }
+
+  .photoshoot-select-button {
+    max-width: 245px !important;
+  }
+
+
+  /* Spotify */
+
+  .spotify-hub-header {
+    padding: 14px !important;
+  }
+
+  .spotify-hub-title {
+    font-size: 14px !important;
+  }
+
+
+  /* Track */
+
+  .spotify-track-card {
+    grid-template-columns: 44px minmax(0, 1fr) auto !important;
+
+    gap: 8px !important;
+
+    padding: 8px !important;
+  }
+
+  .spotify-album-art {
+    width: 44px !important;
+
+    height: 44px !important;
+  }
+
+  .spotify-track-name {
+    font-size: 9px !important;
+  }
+
+  .spotify-track-artist {
+    font-size: 7.5px !important;
+  }
+
+  .spotify-track-duration {
+    font-size: 7px !important;
+  }
+
+
+  /* Duration buttons */
+
+  .photoshoot-page .grid.grid-cols-3 button {
+    font-size: 7px !important;
+
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+  }
+
+
+  /* Generated reel */
+
+  #ready-reel-section > div:first-child {
+    width: 200px !important;
+  }
+}

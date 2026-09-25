@@ -38,9 +38,17 @@ import {
   reelFileUrl,
   startAnalysis,
   uploadMusic,
+  uploadBrandLogo,
   uploadVideos,
+  getCredits,
 } from "../../api";
-import type { MusicTrack, ReelPlan, ReelResult } from "../../types";
+import "./PhotoshootUploadsPage.css";
+import type {
+  ClipData,
+  MusicTrack,
+  ReelPlan,
+  ReelResult,
+} from "../../types";
 import AudioWaveformCutter from "./AudioWaveformCutter";
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -250,6 +258,11 @@ export default function PhotoshootUploadsPage({
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
+  const [analyzedClips, setAnalyzedClips] = useState<ClipData[]>([]);
+  const [previewClipIndex, setPreviewClipIndex] = useState<number | null>(null);
+const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [selectedClipIndexes, setSelectedClipIndexes] = useState<number[]>([]);
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
 
   /* ── Generate preview URL for staged video ── */
   useEffect(() => {
@@ -298,9 +311,83 @@ export default function PhotoshootUploadsPage({
   const [stagedPhotos, setStagedPhotos] = useState<File[]>([]);
 
   /* ── Branding logo & watermark placement ── */
-  const [brandPlacement, setBrandPlacement] = useState<
-    "watermark" | "top_left" | "top_right" | "bottom_left" | "none"
-  >("watermark");
+const [brandPlacement, setBrandPlacement] = useState<
+  "start" | "entire"
+>("start");
+
+const [brandLogo, setBrandLogo] = useState<File | null>(null);
+const [brandLogoPreview, setBrandLogoPreview] = useState<string | null>(null);
+const [isUploadingBrandLogo, setIsUploadingBrandLogo] = useState(false);
+
+const brandLogoInputRef = useRef<HTMLInputElement | null>(null);
+const handleBrandLogoUpload = async (
+  file: File | null,
+  placement: "start" | "entire" = brandPlacement
+) => {
+  if (!file) return;
+
+  const allowedTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ];
+
+  if (!allowedTypes.includes(file.type)) {
+    alert("Please upload a JPG, PNG, or WEBP image.");
+    return;
+  }
+
+  if (file.size > 20 * 1024 * 1024) {
+    alert("Logo image must be smaller than 20 MB.");
+    return;
+  }
+
+  setBrandLogo(file);
+
+  const previewUrl = URL.createObjectURL(file);
+  setBrandLogoPreview(previewUrl);
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("placement", placement);
+
+  try {
+    setIsUploadingBrandLogo(true);
+
+    const response = await fetch(
+      "http://127.0.0.1:8000/api/branding/logo",
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+
+      throw new Error(
+        errorData?.detail || "Failed to upload brand logo."
+      );
+    }
+
+    const data = await response.json();
+
+    console.log("Brand logo uploaded:", data);
+  } catch (error) {
+    console.error("Brand logo upload failed:", error);
+
+    setBrandLogo(null);
+    setBrandLogoPreview(null);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Failed to upload brand logo."
+    );
+  } finally {
+    setIsUploadingBrandLogo(false);
+  }
+};
 
   /* ── Generation pipeline ── */
   const [isGenerating, setIsGenerating] = useState(false);
@@ -310,6 +397,17 @@ export default function PhotoshootUploadsPage({
   const [generatedResult, setGeneratedResult] = useState<ReelResult | null>(null);
   const [generatedReelId, setGeneratedReelId] = useState<string | null>(null);
   const [isSavedToLibrary, setIsSavedToLibrary] = useState(false);
+  const refreshCredits = async () => {
+  try {
+    const data = await getCredits();
+
+    console.log("Updated credits:", data.credits);
+
+    window.dispatchEvent(new Event("credits-updated"));
+  } catch (error) {
+    console.error("Failed to refresh credits:", error);
+  }
+};
 
   /* ─────────────────────────────────────────────── */
   /*  Load backend track catalogue                   */
@@ -529,6 +627,44 @@ export default function PhotoshootUploadsPage({
       ) ?? null
     );
   };
+  const toggleClipSelection = (index: number) => {
+  setSelectedClipIndexes((current) =>
+    current.includes(index)
+      ? current.filter((item) => item !== index)
+      : [...current, index]
+  );
+};
+const playClipPreview = (index: number) => {
+  const video = clipPreviewRef.current;
+  const clip = analyzedClips[index];
+
+  if (!video || !clip) return;
+
+  if (previewClipIndex === index && !video.paused) {
+    video.pause();
+    setPreviewClipIndex(null);
+    return;
+  }
+
+  setPreviewClipIndex(index);
+
+  const startPreview = () => {
+    video.currentTime = clip.start_time;
+
+    video.play().catch((err) => {
+      console.error("Clip preview failed:", err);
+    });
+  };
+
+  if (video.readyState >= 1) {
+    startPreview();
+  } else {
+    video.addEventListener("loadedmetadata", startPreview, {
+      once: true,
+    });
+  }
+};
+
 
   /* ─────────────────────────────────────────────── */
   /*  Generation pipeline                            */
@@ -563,6 +699,7 @@ export default function PhotoshootUploadsPage({
         jobId ? { job_id: jobId } : { use_demo: true }
       );
       const activeJobId = analysisInit.job_id;
+      setAnalysisJobId(activeJobId);
 
       let attempts = 0;
       let done = false;
@@ -570,13 +707,26 @@ export default function PhotoshootUploadsPage({
         await new Promise((res) => setTimeout(res, 1200));
         attempts++;
         const summary = await getAnalysis(activeJobId);
-        if (summary.status === "completed") done = true;
-        else if (summary.status === "failed")
-          throw new Error(summary.error || "Footage analysis failed.");
+
+if (summary.status === "completed") {
+  const clips = summary.clips ?? [];
+
+  setAnalyzedClips(clips);
+
+  // Select all clips by default
+  setSelectedClipIndexes(clips.map((_, index) => index));
+
+  done = true;
+} else if (summary.status === "failed") {
+  throw new Error(summary.error || "Footage analysis failed.");
+}
       }
 
-      setCurrentStep(3);
-      setStepLabel("Sequencing cuts & syncing transitions to soundtrack tempo...");
+      
+      setIsGenerating(false);
+setCurrentStep(3);
+setStepLabel("Select the clips you want to include in your reel.");
+return;
       const initialPlan = await planReel({
         analysis_job_id: activeJobId,
         target_duration: targetDuration,
@@ -622,10 +772,10 @@ export default function PhotoshootUploadsPage({
         },
         music: selectedTrack
           ? {
-              track_id: selectedTrack.id,
-              track_name: selectedTrack.display_name || selectedTrack.filename,
-              source_path: selectedTrack.filename,
-              source_duration: selectedTrack.duration || targetDuration,
+              track_id: selectedTrack!.id,
+track_name: selectedTrack!.display_name || selectedTrack!.filename,
+source_path: selectedTrack!.filename,
+source_duration: selectedTrack!.duration || targetDuration,
               start_time: audioCutStart,          // ← user's chosen cut start
               end_time: audioCutStart + targetDuration, // ← auto-locked end
               volume: 0.85,
@@ -640,14 +790,18 @@ export default function PhotoshootUploadsPage({
         "Rendering final 1080×1920 broadcast video with brand watermark..."
       );
       const result = await generateReel({
-        reel_plan: planToGenerate,
-        analysis_job_id: activeJobId,
-      });
+  reel_plan: planToGenerate,
+  analysis_job_id: activeJobId,
+});
 
-      setGeneratedResult(result);
-      const reelId = (result as any).reel_id || `reel-${Date.now()}`;
-      setGeneratedReelId(reelId);
-      setIsGenerating(false);
+setGeneratedResult(result);
+const reelId = (result as any).reel_id || `reel-${Date.now()}`;
+setGeneratedReelId(reelId);
+
+// Refresh credit balance after successful reel generation
+await refreshCredits();
+
+setIsGenerating(false);
 
       setTimeout(() => {
         const el = document.getElementById("ready-reel-section");
@@ -666,6 +820,137 @@ export default function PhotoshootUploadsPage({
       setIsGenerating(false);
     }
   };
+
+  const handleGenerateSelectedReel = async () => {
+  if (!analysisJobId) {
+    setError("Please analyze the footage first.");
+    return;
+  }
+
+  const selectedClips = analyzedClips.filter((_, index) =>
+    selectedClipIndexes.includes(index)
+  );
+
+  if (selectedClips.length === 0) {
+    setError("Please select at least one clip.");
+    return;
+  }
+
+  setError(null);
+  setIsGenerating(true);
+  setCurrentStep(3);
+  setStepLabel("Sequencing selected clips...");
+
+  try {
+    const initialPlan = await planReel({
+      analysis_job_id: analysisJobId,
+      target_duration: targetDuration,
+    });
+
+    const selectedKeys = new Set(
+      selectedClips.map(
+        (clip) =>
+          `${clip.source_file}|${clip.start_time}|${clip.end_time}`
+      )
+    );
+
+    const plannedClips = initialPlan.clips.filter((clip) =>
+      selectedKeys.has(
+        `${clip.source_file}|${clip.original_start}|${clip.original_end}`
+      )
+    );
+    console.log("Selected clips:", selectedClips);
+console.log("Planned clips after filtering:", plannedClips);
+
+    if (plannedClips.length === 0) {
+  throw new Error(
+    "None of the selected clips could be matched to the reel plan."
+  );
+}
+
+const finalClips = plannedClips;
+
+    const planToGenerate: ReelPlan = {
+      ...initialPlan,
+      clips: finalClips,
+      target_duration: targetDuration,
+      product: {
+        product_name: collectionTitle,
+        price: price ? `₹${price}` : "",
+        category,
+        material: "Artisanal Weave",
+        color: "Traditional",
+        product_code: "KL-AUTOREEL",
+      },
+      overlays: {
+        ...initialPlan.overlays,
+        brand_placement: brandPlacement,
+      },
+      music: selectedTrack
+        ? {
+            track_id: selectedTrack.id,
+            track_name:
+              selectedTrack.display_name || selectedTrack.filename,
+            source_path: selectedTrack.filename,
+            source_duration:
+              selectedTrack.duration || targetDuration,
+            start_time: audioCutStart,
+            end_time: audioCutStart + targetDuration,
+            volume: 0.85,
+            loop_if_needed: true,
+            preserve_original_audio: false,
+          }
+        : null,
+    };
+
+    setCurrentStep(4);
+    setStepLabel("Rendering final commercial reel...");
+
+    const result = await generateReel({
+  reel_plan: planToGenerate,
+  analysis_job_id: analysisJobId,
+});
+
+setGeneratedResult(result);
+
+const reelId =
+  (result as any).reel_id || `reel-${Date.now()}`;
+
+setGeneratedReelId(reelId);
+
+// Refresh credit balance after successful reel generation
+await refreshCredits();
+
+setIsGenerating(false);
+
+    setTimeout(() => {
+      const el = document.getElementById("ready-reel-section");
+      if (el) {
+        el.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      }
+    }, 250);
+  } catch (err: any) {
+    console.error("Selected reel generation error:", err);
+
+    const detail = err.response?.data?.detail;
+
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail
+        ? JSON.stringify(detail)
+        : err.message;
+
+    setError(
+      message || "Failed to generate reel. Please try again."
+    );
+
+    setIsGenerating(false);
+  }
+};
 
   /* ─────────────────────────────────────────────── */
   /*  Save / handoff                                 */
@@ -848,9 +1133,7 @@ export default function PhotoshootUploadsPage({
             />
           </div>
           <div className="flex-1 text-left space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold mono">
-              <Check className="w-3.5 h-3.5" /> REEL READY FOR BROADCAST
-            </div>
+            
             <h2 className="text-2xl font-bold font-display text-[#faf7f2]">
               {collectionTitle}
             </h2>
@@ -1187,6 +1470,163 @@ export default function PhotoshootUploadsPage({
                 </div>
               </div>
             )}
+            {/* ══ AI ANALYZED CLIPS ══ */}
+{analyzedClips.length > 0 && (
+  <div className="p-5 rounded-xl bg-[#111115] border border-white/10 space-y-4">
+    <div className="flex items-center justify-between">
+  <div>
+    <h3 className="text-sm font-bold font-display text-white">
+      AI Analyzed Clips
+    </h3>
+
+    <p className="text-xs text-[var(--db-muted)] mt-1">
+  {selectedClipIndexes.length} of {analyzedClips.length} clips selected
+</p>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      onClick={() =>
+        setSelectedClipIndexes(
+          analyzedClips.map((_, index) => index)
+        )
+      }
+      className="px-2.5 py-1 rounded-md border border-white/10 text-[10px] text-white hover:bg-white/5"
+    >
+      Select All
+    </button>
+
+    <button
+      type="button"
+      onClick={() => setSelectedClipIndexes([])}
+      className="px-2.5 py-1 rounded-md border border-white/10 text-[10px] text-[var(--db-muted)] hover:bg-white/5"
+    >
+      Clear
+    </button>
+
+    <span className="px-2.5 py-1 rounded-lg bg-[#ff681b]/10 border border-[#ff681b]/30 text-[#ff681b] text-[10px] font-bold mono">
+      AI SCORED
+    </span>
+  </div>
+</div>
+{previewVideoUrl && (
+  <div className="rounded-xl overflow-hidden border border-white/10 bg-black">
+    <video
+      ref={clipPreviewRef}
+      src={previewVideoUrl}
+      controls
+      playsInline
+      className="w-full max-h-[360px] object-contain"
+      onTimeUpdate={(event) => {
+        if (previewClipIndex === null) return;
+
+        const clip = analyzedClips[previewClipIndex];
+
+        if (clip && event.currentTarget.currentTime >= clip.end_time) {
+          event.currentTarget.pause();
+          event.currentTarget.currentTime = clip.start_time;
+          setPreviewClipIndex(null);
+        }
+      }}
+      onEnded={() => setPreviewClipIndex(null)}
+    />
+
+    {previewClipIndex !== null && analyzedClips[previewClipIndex] && (
+      <div className="px-3 py-2 text-xs text-[var(--db-muted)]">
+        Previewing Clip {previewClipIndex + 1}:{" "}
+        {analyzedClips[previewClipIndex].start_time.toFixed(1)}s →{" "}
+        {analyzedClips[previewClipIndex].end_time.toFixed(1)}s
+      </div>
+    )}
+  </div>
+)}
+
+    <div className="space-y-2 max-h-[400px] overflow-y-auto">
+      {analyzedClips.map((clip, index) => (
+        <div
+  key={`${clip.source_file}-${clip.start_time}-${index}`}
+  onClick={() => toggleClipSelection(index)}
+  className={`flex items-center justify-between gap-4 p-3 rounded-lg border cursor-pointer transition-all ${
+  previewClipIndex === index
+    ? "bg-[#ff681b]/20 border-[#ff681b]"
+    : selectedClipIndexes.includes(index)
+      ? "bg-[#ff681b]/10 border-[#ff681b]/50"
+      : "bg-black/40 border-white/10 opacity-60"
+}`}
+>
+  <div className="shrink-0 flex items-center gap-2">
+  <button
+    type="button"
+    onClick={(event) => {
+      event.stopPropagation();
+      playClipPreview(index);
+    }}
+    className="w-8 h-8 rounded-full bg-white/10 border border-white/10 hover:bg-[#ff681b] flex items-center justify-center transition-all"
+    title={`Preview Clip ${index + 1}`}
+  >
+    {previewClipIndex === index ? (
+      <span className="text-white text-xs">Ⅱ</span>
+    ) : (
+      <span className="text-white text-xs ml-0.5">▶</span>
+    )}
+  </button>
+
+  <div
+    className={`w-5 h-5 rounded border flex items-center justify-center ${
+      selectedClipIndexes.includes(index)
+        ? "bg-[#ff681b] border-[#ff681b]"
+        : "border-white/30"
+    }`}
+  >
+    {selectedClipIndexes.includes(index) && (
+      <span className="text-white text-xs font-bold">✓</span>
+    )}
+  </div>
+</div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-white">
+                Clip {index + 1}
+              </span>
+
+              <span className="text-[10px] text-[var(--db-muted)] mono">
+                {clip.start_time.toFixed(1)}s →{" "}
+                {clip.end_time.toFixed(1)}s
+              </span>
+            </div>
+
+            <p className="text-xs text-[var(--db-muted)] truncate mt-1">
+              {clip.source_file}
+            </p>
+
+            <p className="text-[10px] text-[var(--db-dim)] mt-1">
+              Duration: {clip.duration.toFixed(1)}s
+            </p>
+          </div>
+
+          <div className="shrink-0 text-center">
+            <span className="block text-[9px] text-[var(--db-muted)] uppercase">
+              Score
+            </span>
+
+            <span
+              className={`text-xl font-bold ${
+                clip.score >= 80
+                  ? "text-emerald-400"
+                  : clip.score >= 60
+                    ? "text-yellow-400"
+                    : "text-red-400"
+              }`}
+            >
+              {clip.score}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
 
             {/* ══ SPOTIFY MUSIC HUB ══ */}
             <div className="spotify-hub">
@@ -1567,52 +2007,148 @@ export default function PhotoshootUploadsPage({
                   FFMPEG WATERMARK
                 </span>
               </div>
-              <div className="flex items-center gap-3 p-2.5 rounded-lg bg-black/40 border border-white/5">
-                <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/80 border border-white/10 flex items-center justify-center p-1 shrink-0">
-                  <img
-                    src="http://127.0.0.1:8000/api/branding/logo"
-                    alt="Brand Logo"
-                    className="w-full h-full object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLElement).style.display = "none";
-                    }}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-semibold text-white truncate">
-                    Kaladhar Studio
-                  </div>
-                  <div className="text-[11px] text-[var(--db-muted)]">
-                    Commercial Broadcast Branding
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-[var(--db-muted)] block mb-1.5">
-                  Logo Watermark Position
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: "watermark", label: "Bottom Right" },
-                    { id: "top_left", label: "Top Left" },
-                    { id: "top_right", label: "Top Right" },
-                    { id: "bottom_left", label: "Bottom Left" },
-                  ].map((pos) => (
-                    <button
-                      key={pos.id}
-                      type="button"
-                      onClick={() => setBrandPlacement(pos.id as any)}
-                      className={`py-2 px-2.5 rounded-lg border text-xs text-left transition-all ${
-                        brandPlacement === pos.id
-                          ? "border-[#ff681b] bg-[#ff681b]/15 text-[#ff681b] font-semibold"
-                          : "border-white/10 text-white/60 hover:bg-white/5"
-                      }`}
-                    >
-                      {pos.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              
+              {/* Brand Watermark Overlay Card */}
+<div className="p-5 rounded-xl bg-[#111115] border border-white/10 space-y-4">
+
+  
+
+  {/* Logo Upload */}
+  <div className="p-3 rounded-lg bg-black/40 border border-white/5">
+
+    <div className="flex items-center gap-3">
+
+      {/* Logo Preview */}
+      <div className="w-14 h-14 rounded-lg overflow-hidden bg-black/80 border border-white/10 flex items-center justify-center shrink-0">
+
+        {brandLogoPreview ? (
+          <img
+            src={brandLogoPreview}
+            alt="Brand Logo"
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <span className="text-[10px] text-white/30">
+            LOGO
+          </span>
+        )}
+
+      </div>
+
+      {/* Upload button */}
+      <div className="flex-1">
+
+        <p className="text-xs font-semibold text-white">
+          Brand Logo
+        </p>
+
+        <p className="text-[11px] text-[var(--db-muted)] mt-1">
+          JPG, PNG or WEBP · Max 20 MB
+        </p>
+
+        <button
+          type="button"
+          onClick={() => brandLogoInputRef.current?.click()}
+          disabled={isUploadingBrandLogo}
+          className="mt-2 px-3 py-1.5 rounded-lg border border-[#ff681b]/40 bg-[#ff681b]/10 text-[#ff681b] text-xs font-semibold hover:bg-[#ff681b]/20 transition-all disabled:opacity-50"
+        >
+          {isUploadingBrandLogo
+            ? "Uploading..."
+            : brandLogo
+              ? "Change Logo"
+              : "Choose Image"}
+        </button>
+
+        <input
+          ref={brandLogoInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0] || null;
+            handleBrandLogoUpload(file);
+            event.target.value = "";
+          }}
+        />
+
+      </div>
+    </div>
+  </div>
+
+  {/* Logo Placement */}
+  <div>
+    <label className="text-xs text-[var(--db-muted)] block mb-1.5">
+      Logo Placement
+    </label>
+
+    <div className="grid grid-cols-2 gap-2">
+
+      <button
+        type="button"
+        onClick={async () => {
+  setBrandPlacement("start");
+
+  try {
+    await fetch(
+      "http://127.0.0.1:8000/api/branding/logo/placement",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          placement: "start",
+        }),
+      }
+    );
+  } catch (error) {
+    console.error("Failed to update logo placement:", error);
+  }
+}}
+        className={`py-2.5 px-3 rounded-lg border text-xs text-left transition-all ${
+          brandPlacement === "start"
+            ? "border-[#ff681b] bg-[#ff681b]/15 text-[#ff681b] font-semibold"
+            : "border-white/10 text-white/60 hover:bg-white/5"
+        }`}
+      >
+        Starting of Reel
+      </button>
+
+      <button
+        type="button"
+      onClick={async () => {
+  setBrandPlacement("entire");
+
+  try {
+    await fetch(
+      "http://127.0.0.1:8000/api/branding/logo/placement",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          placement: "entire",
+        }),
+      }
+    );
+  } catch (error) {
+    console.error("Failed to update logo placement:", error);
+  }
+}}
+        className={`py-2.5 px-3 rounded-lg border text-xs text-left transition-all ${
+          brandPlacement === "entire"
+            ? "border-[#ff681b] bg-[#ff681b]/15 text-[#ff681b] font-semibold"
+            : "border-white/10 text-white/60 hover:bg-white/5"
+        }`}
+      >
+        Entire Reel
+      </button>
+
+    </div>
+  </div>
+
+</div>
             </div>
 
             {/* Reel Settings & Duration */}
@@ -1685,12 +2221,24 @@ export default function PhotoshootUploadsPage({
             {/* Generate button */}
             <button
               type="button"
-              onClick={handleGenerateReel}
-              disabled={isGenerating || files.length === 0}
+              onClick={
+  analyzedClips.length > 0
+    ? handleGenerateSelectedReel
+    : handleGenerateReel
+}
+              disabled={
+  isGenerating ||
+  files.length === 0 ||
+  (analyzedClips.length > 0 && selectedClipIndexes.length === 0)
+}
               className="w-full py-4 px-6 rounded-xl bg-[#ff681b] hover:bg-[#ff7d3b] text-white font-bold font-display text-sm tracking-wider uppercase transition-all shadow-xl shadow-[#ff681b]/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Film className="w-4 h-4" />
-              <span>GENERATE COMMERCIAL REEL</span>
+              <span>
+  {analyzedClips.length > 0
+    ? "GENERATE SELECTED REEL"
+    : "ANALYZE FOOTAGE"}
+</span>
             </button>
 
             {files.length === 0 && (

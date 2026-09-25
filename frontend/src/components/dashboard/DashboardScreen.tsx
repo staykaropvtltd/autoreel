@@ -140,6 +140,39 @@ export default function DashboardScreen({
   const { theme } = useTheme();
 
   const isLight = theme === "light";
+  const [credits, setCredits] = useState<number | null>(null);
+
+const fetchCredits = async () => {
+  try {
+    const response = await fetch("http://localhost:8000/api/credits");
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch credits");
+    }
+
+    const data = await response.json();
+
+    setCredits(data.credits);
+  } catch (error) {
+    console.error("Failed to fetch credits:", error);
+  }
+};
+
+useEffect(() => {
+  fetchCredits();
+}, []);
+
+useEffect(() => {
+  const handleCreditsUpdated = () => {
+    fetchCredits();
+  };
+
+  window.addEventListener("credits-updated", handleCreditsUpdated);
+
+  return () => {
+    window.removeEventListener("credits-updated", handleCreditsUpdated);
+  };
+}, []);
 
   const storageKey = user
     ? `kaladhar_reels_${user.id}`
@@ -776,8 +809,8 @@ const handleSaveProfile = (
     <span>Credits</span>
 
     <span className="nav-small-label">
-      50
-    </span>
+  {credits !== null ? credits : "..."}
+</span>
   </button>
   {/* SETTINGS */}
 <button
@@ -889,8 +922,8 @@ const handleSaveProfile = (
     }}
   />
 
-  ) : activeTab === "credits" ? (
-    <CreditsPage />
+ ) : activeTab === "credits" ? (
+  <CreditsPage credits={credits} />
 
   ) : activeTab === "previous" ? (
    <PreviousWorksPage
@@ -1302,7 +1335,14 @@ const handleSaveProfile = (
                  LIST VIEW
                  ================================================= */
 
-              <section className="reel-list page-enter">
+              <section
+  className="reel-list page-enter"
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: "14px",
+  }}
+>
                 {filteredProjects.map(
                   (project) => (
                     <div
@@ -1625,7 +1665,9 @@ const handleSaveProfile = (
           >
             <CreditCard />
             <span>Credits</span>
-            <span>50</span>
+            <span>
+  {credits !== null ? credits : "..."}
+</span>
           </button>
 
 
@@ -2359,7 +2401,11 @@ function PreviousWorksPage({
     </section>
   );
 }
-function CreditsPage() {
+function CreditsPage({
+  credits,
+}: {
+  credits: number | null;
+}) {
   return (
     <section className="credits-page">
       {/* HEADER */}
@@ -2391,7 +2437,9 @@ function CreditsPage() {
 
     {/* LEFT */}
     <div className="credits-balance-main">
-      <div className="credits-number">50</div>
+      <div className="credits-number">
+  {credits !== null ? credits : "..."}
+</div>
 
       <p className="credits-remaining">
         credits remaining
@@ -2409,15 +2457,26 @@ function CreditsPage() {
         <span>Credit Balance</span>
 
         <span className="credits-progress-value">
-          <strong>50</strong> / 50
-        </span>
+  <strong>
+    {credits !== null ? credits : "..."}
+  </strong>{" "}
+  / 50
+</span>
       </div>
 
       <div className="credits-progress-track">
         <div
-          className="credits-progress-fill"
-          style={{ width: "100%" }}
-        />
+  className="credits-progress-fill"
+  style={{
+    width: `${Math.min(
+      100,
+      Math.max(
+        0,
+        ((credits ?? 0) / 50) * 100
+      )
+    )}%`,
+  }}
+/>
       </div>
 
       {/* RENEWAL INFO */}

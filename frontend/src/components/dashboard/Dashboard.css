@@ -1630,8 +1630,8 @@
 
   display: grid;
 
-  grid-template-columns:
-    repeat(auto-fill, minmax(250px, 1fr));
+ grid-template-columns: repeat(4, 250px);
+gap: 14px;
 
   gap: 18px;
 
@@ -2000,12 +2000,11 @@
   position: relative;
   z-index: 2;
 
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 
-  gap: 8px;
+  gap: 14px;
 }
-
 .reel-list-item {
   min-height: 82px;
 

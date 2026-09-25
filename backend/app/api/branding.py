@@ -8,6 +8,7 @@ from app.services.brand_service import (
     get_brand_logo_path,
     get_logo_placement,
     save_user_logo,
+    set_logo_placement,
 )
 
 router = APIRouter()
@@ -137,5 +138,29 @@ async def upload_brand_logo(
         "status": "uploaded",
         "filename": logo_path.name,
         "logo_url": "/api/branding/logo",
+        "placement": placement,
+    }
+@router.post("/branding/logo/placement")
+def update_logo_placement(placement: str) -> dict:
+    """
+    Updates the logo placement without re-uploading the logo.
+    """
+
+    if placement not in {"start", "entire"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid logo placement. Use 'start' or 'entire'.",
+        )
+
+    try:
+        set_logo_placement(placement)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update logo placement.",
+        ) from exc
+
+    return {
+        "status": "updated",
         "placement": placement,
     }
