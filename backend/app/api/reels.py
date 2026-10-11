@@ -179,6 +179,18 @@ def _resolve_template_image(analysis_job_id: str | None) -> Path | None:
 
     # Resolve the path and make sure it stays inside storage/templates.
     templates_root = TEMPLATE_IMAGES_DIR.resolve()
+
+    template_record = get_template_image(str(template_uuid))
+    if template_record and template_record.get("path"):
+        template_file = Path(template_record["path"]).resolve()
+        if not template_file.is_relative_to(templates_root):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid template path",
+            )
+        if template_file.exists() and template_file.is_file():
+            return template_file
+
     template_dir = (
         TEMPLATE_IMAGES_DIR / str(template_uuid)
     ).resolve()
@@ -214,7 +226,14 @@ def _resolve_template_image(analysis_job_id: str | None) -> Path | None:
             detail=f"Template image file not found: {template_id}",
         )
 
-    return template_files[0]
+    resolved_path = template_files[0].resolve()
+    if not resolved_path.is_relative_to(templates_root):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid template path",
+        )
+
+    return resolved_path
 
 
 def _get_candidate_pool(
