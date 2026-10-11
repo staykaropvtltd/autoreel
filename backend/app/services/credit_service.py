@@ -8,8 +8,6 @@ from threading import Lock
 
 INITIAL_CREDITS = 50
 REEL_GENERATION_COST = 10
-REGENERATION_COST = 5
-DAILY_CREDIT_REWARD = 10
 MAX_CREDITS = 50
 
 
@@ -52,16 +50,6 @@ def get_balance(user_id: str) -> int:
 
     return account.balance
 
-
-# =========================
-# CHECK CREDITS
-# =========================
-
-def has_enough_credits(user_id: str, amount: int) -> bool:
-
-    account = get_or_create_account(user_id)
-
-    return account.balance >= amount
 
 
 # =========================
