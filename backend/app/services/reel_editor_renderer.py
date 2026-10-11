@@ -410,8 +410,6 @@ def render_final_overlay(
             args += ["-stream_loop", "-1"]
 
         args += [
-            "-ss",
-            str(music.start_time),
             "-i",
             str(music_file_path),
         ]
@@ -506,8 +504,12 @@ def render_final_overlay(
 
     if music_index is not None:
         audio_start = max(0.0, float(music.start_time or 0.0))
-        audio_end = audio_start + float(target_duration)
-        fade_out_start = max(target_duration - MUSIC_FADE_SECONDS, 0.0)
+        max_audio_end = audio_start + float(target_duration)
+        if music.end_time is not None and float(music.end_time) > audio_start:
+            audio_end = min(float(music.end_time), max_audio_end)
+        else:
+            audio_end = max_audio_end
+        fade_out_start = max((audio_end - audio_start) - MUSIC_FADE_SECONDS, 0.0)
         music_volume = music.volume
 
         if not isinstance(music_volume, (int, float)):
@@ -540,7 +542,7 @@ def render_final_overlay(
             "-filter_complex",
             ";".join(filter_parts),
             "-map",
-            f"[{video_label}]",
+            f"[{video_label}]" if video_label != "0:v" else "0:v",
         ]
     else:
         args += ["-map", "0:v"]

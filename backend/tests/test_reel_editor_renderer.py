@@ -714,3 +714,144 @@ def test_render_final_overlay_custom_audio_start_time(tmp_path: Path):
         f"Expected asetpts=PTS-STARTPTS in filter_complex, got: {filter_complex}"
     )
 
+
+def test_render_final_overlay_honors_end_time(tmp_path: Path):
+    """F-20: render_final_overlay must honor music.end_time when specified."""
+    from unittest.mock import patch
+
+    intermediate = tmp_path / "intermediate.mp4"
+    intermediate.write_bytes(b"\x00" * 100)
+    output = tmp_path / "output.mp4"
+
+    music = MusicSelection(
+        track_id="test",
+        track_name="Test",
+        source_path="test.mp3",
+        source_duration=60.0,
+        start_time=10.0,
+        end_time=18.0,  # Explicit 8-second window
+        volume=1.0,
+        loop_if_needed=False,
+        preserve_original_audio=False,
+    )
+    music_file = tmp_path / "test.mp3"
+    music_file.write_bytes(b"\x00" * 100)
+
+    captured_args: list[list[str]] = []
+
+    with patch(
+        "app.services.reel_editor_renderer.run_ffmpeg", side_effect=lambda a: captured_args.append(a)
+    ):
+        render_final_overlay(
+            intermediate_path=intermediate,
+            output_path=output,
+            overlay_filter=None,
+            logo_path=None,
+            logo_windows=[],
+            target_duration=15.0,  # Longer than end_time - start_time
+            music=music,
+            music_file_path=music_file,
+        )
+
+    fc = captured_args[0][captured_args[0].index("-filter_complex") + 1]
+    assert "atrim=10.000:18.000" in fc, f"Expected atrim to end at end_time 18.000, got {fc}"
+    # Verify input args do not include -ss before -i to avoid double offset
+    input_flag_idx = captured_args[0].index(str(music_file))
+    assert captured_args[0][input_flag_idx - 1] == "-i"
+    assert "-ss" not in captured_args[0][:input_flag_idx]
+
+
+def test_render_final_overlay_ramp_audio_single_offset(tmp_path: Path):
+    """F-20: Decode samples from ramp audio to verify start_time is applied exactly once."""
+    import struct
+    import subprocess
+    import wave
+
+    sample_rate = 8000
+    duration = 5.0
+    total_samples = int(sample_rate * duration)
+    wav_path = tmp_path / "ramp.wav"
+
+    with wave.open(str(wav_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        data = bytearray()
+        for i in range(total_samples):
+            val = int((i / total_samples) * 30000)
+            data.extend(struct.pack("<h", val))
+        wf.writeframes(data)
+
+    intermediate = tmp_path / "intermediate.mp4"
+    output = tmp_path / "output.mp4"
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=720x1280:r=30:d=3",
+            "-c:v",
+            "libx264",
+            str(intermediate),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    music = MusicSelection(
+        track_id="ramp",
+        track_name="Ramp",
+        source_path=str(wav_path),
+        source_duration=5.0,
+        start_time=1.0,
+        end_time=4.5,
+        volume=1.0,
+        loop_if_needed=False,
+        preserve_original_audio=False,
+    )
+
+    render_final_overlay(
+        intermediate_path=intermediate,
+        output_path=output,
+        overlay_filter=None,
+        logo_path=None,
+        logo_windows=[],
+        target_duration=3.0,
+        music=music,
+        music_file_path=wav_path,
+    )
+
+    # Decode audio slice at t=1.0s of output (target source time = 1.0 + 1.0 = 2.0s)
+    # Expected amplitude around 12000 / sqrt(2) ≈ 8500-8600.
+    # If double offset had occurred, source time would be 3.0s (amplitude ~12700).
+    res = subprocess.run(
+        [
+            "ffmpeg",
+            "-ss",
+            "1.0",
+            "-i",
+            str(output),
+            "-t",
+            "0.05",
+            "-f",
+            "s16le",
+            "-ar",
+            "8000",
+            "-ac",
+            "1",
+            "-",
+        ],
+        capture_output=True,
+        check=True,
+    )
+
+    samples = [struct.unpack("<h", res.stdout[i : i + 2])[0] for i in range(0, len(res.stdout), 2)]
+    assert len(samples) > 0
+    avg_sample = sum(samples) / len(samples)
+    # Single offset gives ~8588. Double offset would give ~12700.
+    assert 7000 < avg_sample < 10000, f"Expected single offset sample (~8588), got {avg_sample}"
+
+
