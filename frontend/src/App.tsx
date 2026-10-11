@@ -4,7 +4,6 @@ import {
   generateReel,
   getAnalysis,
   getDemoStatus,
-  listMusic,
   planReel,
   startAnalysis,
   uploadVideos,
