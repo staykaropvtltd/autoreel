@@ -16,6 +16,24 @@ def _parse_fps(rate: str) -> float:
     return float(numerator) / denominator if denominator else 0.0
 
 
+def _get_rotation(video_stream: dict) -> int:
+    tags = video_stream.get("tags") or {}
+    rotate_val = tags.get("rotate") or tags.get("ROTATE")
+    if rotate_val is not None:
+        try:
+            return int(float(rotate_val))
+        except (ValueError, TypeError):
+            pass
+
+    for side_data in video_stream.get("side_data_list") or []:
+        if "rotation" in side_data:
+            try:
+                return int(float(side_data["rotation"]))
+            except (ValueError, TypeError):
+                pass
+    return 0
+
+
 def get_video_metadata(input_path: str | Path) -> VideoMetadata:
     input_path = Path(input_path)
     data = probe(input_path)
@@ -30,11 +48,17 @@ def get_video_metadata(input_path: str | Path) -> VideoMetadata:
     fmt = data.get("format", {})
     duration = float(fmt.get("duration") or video_stream.get("duration") or 0.0)
 
+    width = int(video_stream["width"])
+    height = int(video_stream["height"])
+    rotation = _get_rotation(video_stream)
+    if abs(rotation) % 180 == 90:
+        width, height = height, width
+
     return VideoMetadata(
         filename=input_path.name,
         duration=duration,
-        width=int(video_stream["width"]),
-        height=int(video_stream["height"]),
+        width=width,
+        height=height,
         fps=_parse_fps(video_stream.get("r_frame_rate", "0/1")),
         video_codec=video_stream.get("codec_name", "unknown"),
         audio_codec=audio_stream.get("codec_name") if audio_stream else None,
