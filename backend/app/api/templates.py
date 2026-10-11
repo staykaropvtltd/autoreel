@@ -134,5 +134,4 @@ async def upload_template_image(
         "status": "uploaded",
         "filename": filename,
         "size": size,
-        "path": str(destination),
     }
