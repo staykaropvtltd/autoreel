@@ -416,11 +416,6 @@ def generate_reel(
 
     reel_id = str(uuid.uuid4())
 
-    output_filename = safe_filename(
-        request.output_filename
-        or f"reel_{reel_id}.mp4"
-    )
-
     source_dir = _resolve_source_dir(
         request.analysis_job_id
     )
@@ -448,7 +443,7 @@ def generate_reel(
         ),
     )
 
-    output_path = OUTPUTS_DIR / output_filename
+    output_path = OUTPUTS_DIR / f"{reel_id}.mp4"
 
     # ============================================================
     # CREDIT CHECK & DEDUCTION
