@@ -26,5 +26,6 @@
 | F-37 | FIXED | backend/app/services/ffmpeg_service.py:50-100 | added encoding='utf-8', errors='replace', protocol_whitelist in ffprobe & ffmpeg | none |
 | F-38 | FIXED | backend/app/api/reels.py:546-618, app/services/reel_editor_renderer.py:14,948-968 | replaced prints & traceback with logger, prevented bare re-raise | none |
 | F-04 | FIXED | backend/app/api/credits.py:17-86 | deleted /credits/add and /deduct, 0 frontend callers, returns 404 | none |
+| F-20 | FIXED | backend/app/services/reel_editor_renderer.py:410-418,504-515,542-546, backend/tests/test_reel_editor_renderer.py:717-760 | removed duplicate -ss flag, honored music.end_time, fixed video mapping without filters, ramp-audio regression test passed | test_render_final_overlay_honors_end_time, test_render_final_overlay_ramp_audio_single_offset |
 
 
