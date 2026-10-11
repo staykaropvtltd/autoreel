@@ -1,0 +1,132 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..700&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&family=Sora:wght@400..800&family=Space+Grotesk:wght@400..700&display=swap");
+@import "tailwindcss";
+@import "./originkit-section-themes.css";
+@import "./originkit-section-theme.css";
+
+@theme {
+  --color-brand-primary: #7a2048; /* internal studio deep maroon */
+  --color-brand-secondary: #c9a227; /* internal studio gold */
+  --color-brand-accent: #fc731c; /* vibrant orange accent */
+  --color-gold: #d4af37;
+  --color-gold-light: #f3c766;
+  --color-background: #faf7f2;
+  --color-surface: #ffffff;
+  --color-surface-elevated: #fffdfa;
+  --color-text-primary: #faf7f2;
+  --color-text-secondary: #a39e9b;
+  --color-border: rgba(255, 255, 255, 0.08);
+
+  --font-display: "Space Grotesk", "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Inter", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: "Space Grotesk", "Sora", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-cinzel: "Space Grotesk", "Sora", sans-serif;
+  --font-pixel: "JetBrains Mono", monospace;
+  --font-silkscreen: "JetBrains Mono", monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+  background-color: #09090b;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+html.light {
+  background-color: #f8f7f4;
+  color: #0a0a0c;
+}
+
+html.dark {
+  background-color: #09090b;
+  color: #ffffff;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+h1, h2, h3, h4, h5, h6, .font-display {
+  font-family: var(--font-display);
+}
+
+code, pre, kbd, samp, .font-mono {
+  font-family: var(--font-mono);
+}
+
+html.light body {
+  background-color: #f8f7f4;
+  color: #0a0a0c;
+}
+
+html.dark body {
+  background-color: #09090b;
+  color: #ffffff;
+}
+
+/* Luxury Monochrome Cross-Hatch / Diagonal Pattern */
+.obsidian-cross-bg {
+  background-color: #09090b;
+  background-image: 
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 12px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.02) 0px, rgba(255, 255, 255, 0.02) 1px, transparent 1px, transparent 12px);
+}
+
+.gold-gradient-text {
+  color: currentColor;
+}
+
+/* 100% Mathematically Seamless Infinite Linear Marquee (Zero Jump, Zero Reload) */
+@keyframes marqueeSeamlessLeft {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes marqueeSeamlessRight {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(0%);
+  }
+}
+
+@keyframes marqueeSeamlessTop {
+  0% {
+    transform: translateY(0%);
+  }
+  100% {
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes marqueeSeamlessBottom {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(0%);
+  }
+}
+
+.animate-marquee-left {
+  animation: marqueeSeamlessLeft 20s linear infinite;
+}
+
+.animate-marquee-right {
+  animation: marqueeSeamlessRight 20s linear infinite;
+}
+
+.animate-marquee-top {
+  animation: marqueeSeamlessTop 16s linear infinite;
+}
+
+.animate-marquee-bottom {
+  animation: marqueeSeamlessBottom 16s linear infinite;
+}

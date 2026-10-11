@@ -1,0 +1,77 @@
+# ---------- Environment ----------
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+.DS_Store
+*.log
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# ---------- Node / React / Vite ----------
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.local
+
+# ---------- Windows ----------
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---------- Editors ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# ---------- Generated video / media processing ----------
+*.mp4
+*.mov
+*.avi
+*.webm
+*.mp3
+*.wav
+
+# Keep placeholder assets tracked even though media extensions are ignored above
+!assets/**/*.mp3
+!assets/**/*.mp4
+!frontend/public/**/*.mp4
+
+
+# ---------- Storage (runtime data, not source) ----------
+storage/uploads/*
+storage/temp/*
+storage/outputs/*
+storage/music/*
+storage/branding/*
+!storage/uploads/.gitkeep
+!storage/temp/.gitkeep
+!storage/outputs/.gitkeep
+!storage/music/.gitkeep
+!storage/branding/.gitkeep
+
+
+# ---------- AI coding tools ----------
+.claude/
