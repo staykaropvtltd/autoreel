@@ -59,13 +59,19 @@ $RECYCLE.BIN/
 !assets/**/*.mp4
 !frontend/public/**/*.mp4
 
+
 # ---------- Storage (runtime data, not source) ----------
 storage/uploads/*
 storage/temp/*
 storage/outputs/*
+storage/music/*
+storage/branding/*
 !storage/uploads/.gitkeep
 !storage/temp/.gitkeep
 !storage/outputs/.gitkeep
+!storage/music/.gitkeep
+!storage/branding/.gitkeep
+
 
 # ---------- AI coding tools ----------
 .claude/

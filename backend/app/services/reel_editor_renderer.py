@@ -257,15 +257,66 @@ def build_timed_overlay_filter(
 
     clauses = []
     escaped_font = _escape_font_path(font_file)
+
     for window in windows:
         role = window["role"]
         fontsize = size_by_role.get(role, font.body_size)
-        fontcolor = font.accent_color if role in _ACCENT_ROLES and font.accent_color else font.text_color
+
+        if not isinstance(fontsize, (int, float)) or not 12 <= fontsize <= 200:
+            raise ValueError("Invalid font size")
+
+        fontcolor = (
+            font.accent_color
+            if role in _ACCENT_ROLES and font.accent_color
+            else font.text_color
+        )
+
+        allowed_colors = {
+            "white",
+            "black",
+            "red",
+            "green",
+            "blue",
+            "yellow",
+            "orange",
+            "purple",
+            "pink",
+            "gray",
+            "grey",
+        }
+
+        if fontcolor.lower() not in allowed_colors:
+            raise ValueError("Invalid font color")
+
         y_expr = window.get("y_expr", f"h-{SAFE_MARGIN_BOTTOM}")
+
+        if not isinstance(y_expr, str):
+            raise ValueError("Invalid overlay position")
+
+        if not y_expr.startswith(
+            (
+                "h-",
+                "H-",
+                "40",
+                "30",
+                "60",
+                "80",
+                "100",
+                "120",
+                "140",
+                "160",
+                "180",
+                "200",
+                "220",
+            )
+        ):
+            raise ValueError("Invalid overlay position")
+
         # Horizontally centered; SAFE_MARGIN_SIDES is respected in practice
         # since overlay text is short marketing copy, well under the
         # 1080 - 2*SAFE_MARGIN_SIDES safe width at these font sizes.
         x_expr = "(w-text_w)/2"
+
         clauses.append(
             f"drawtext=fontfile='{escaped_font}':"
             f"text='{_escape_drawtext(window['text'])}':"
@@ -277,6 +328,7 @@ def build_timed_overlay_filter(
             f"x={x_expr}:y={y_expr}:"
             f"enable='between(t,{window['start']:.3f},{window['end']:.3f})'"
         )
+
     return ",".join(clauses)
 
 
@@ -286,22 +338,34 @@ MUSIC_FADE_SECONDS = 0.75
 # Logo sits just inside the frame edge, clear of where stacked text starts
 # (SAFE_MARGIN_TOP / SAFE_MARGIN_BOTTOM) so the two never overlap.
 _LOGO_POSITION_EXPR = {
-    "top_left": (str(SAFE_MARGIN_SIDES), "40"),
-    "top-left": (str(SAFE_MARGIN_SIDES), "40"),
-    "top": ("(W-w)/2", "40"),
-    "top_center": ("(W-w)/2", "40"),
-    "top_right": (f"W-w-{SAFE_MARGIN_SIDES}", "40"),
-    "top-right": (f"W-w-{SAFE_MARGIN_SIDES}", "40"),
-    "left": (str(SAFE_MARGIN_SIDES), "(H-h)/2"),
-    "center": ("(W-w)/2", "(H-h)/2"),
-    "right": (f"W-w-{SAFE_MARGIN_SIDES}", "(H-h)/2"),
-    "bottom_left": (str(SAFE_MARGIN_SIDES), "H-h-80"),
-    "bottom-left": (str(SAFE_MARGIN_SIDES), "H-h-80"),
-    "bottom": ("(W-w)/2", "H-h-80"),
-    "down": ("(W-w)/2", "H-h-80"),
-    "bottom_center": ("(W-w)/2", "H-h-80"),
-    "bottom_right": (f"W-w-{SAFE_MARGIN_SIDES}", "H-h-80"),
-    "bottom-right": (f"W-w-{SAFE_MARGIN_SIDES}", "H-h-80"),
+    "top_left": (
+        str(SAFE_MARGIN_SIDES),
+        "40",
+    ),
+    "top_center": (
+        "(W-w)/2",
+        "40",
+    ),
+    "top_right": (
+        f"W-w-{SAFE_MARGIN_SIDES}",
+        "40",
+    ),
+    "center": (
+        "(W-w)/2",
+        "(H-h)/2",
+    ),
+    "bottom_left": (
+        str(SAFE_MARGIN_SIDES),
+        "H-h-80",
+    ),
+    "bottom_center": (
+        "(W-w)/2",
+        "H-h-80",
+    ),
+    "bottom_right": (
+        f"W-w-{SAFE_MARGIN_SIDES}",
+        "H-h-80",
+    ),
 }
 
 # ===============================================================
@@ -902,10 +966,10 @@ def render_final_overlay(
     
 
     if logo_index is not None and logo_windows:
-        x_expr, y_expr = _LOGO_POSITION_EXPR.get(
-            logo_position,
-            _LOGO_POSITION_EXPR["top_left"],
-        )
+        if logo_position not in _LOGO_POSITION_EXPR:
+            raise ValueError("Invalid logo position")
+
+        x_expr, y_expr = _LOGO_POSITION_EXPR[logo_position]
 
         filter_parts.append(
             f"[{logo_index}:v]"
@@ -944,13 +1008,20 @@ def render_final_overlay(
         audio_start = max(0.0, float(music.start_time or 0.0))
         audio_end = audio_start + float(target_duration)
         fade_out_start = max(target_duration - MUSIC_FADE_SECONDS, 0.0)
+        music_volume = music.volume
+
+        if not isinstance(music_volume, (int, float)):
+            raise ValueError("Invalid music volume")
+
+        if not 0.0 <= music_volume <= 1.0:
+            raise ValueError("Music volume must be between 0 and 1")
         music_chain = (
             f"[{music_index}:a]"
             f"atrim={audio_start:.3f}:{audio_end:.3f},"
             f"asetpts=PTS-STARTPTS,"
             f"afade=t=in:st=0:d={MUSIC_FADE_SECONDS},"
             f"afade=t=out:st={fade_out_start:.3f}:d={MUSIC_FADE_SECONDS},"
-            f"volume={music.volume}[amusic]"
+            f"volume={music_volume}[amusic]"
         )
         filter_parts.append(music_chain)
 

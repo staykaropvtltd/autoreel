@@ -355,7 +355,7 @@ const handleBrandLogoUpload = async (
     setIsUploadingBrandLogo(true);
 
     const response = await fetch(
-      "http://127.0.0.1:8000/api/branding/logo",
+      `${import.meta.env.VITE_API_BASE_URL}/branding/logo`,
       {
         method: "POST",
         body: formData,
@@ -767,9 +767,12 @@ return;
           product_code: "KL-AUTOREEL",
         },
         overlays: {
-          ...initialPlan.overlays,
-          brand_placement: brandPlacement,
-        },
+  ...initialPlan.overlays,
+  brand_placement:
+    brandPlacement === "entire"
+      ? "watermark"
+      : "beginning",
+},
         music: selectedTrack
           ? {
               track_id: selectedTrack!.id,
@@ -883,9 +886,12 @@ const finalClips = plannedClips;
         product_code: "KL-AUTOREEL",
       },
       overlays: {
-        ...initialPlan.overlays,
-        brand_placement: brandPlacement,
-      },
+  ...initialPlan.overlays,
+  brand_placement:
+    brandPlacement === "entire"
+      ? "watermark"
+      : "beginning",
+},
       music: selectedTrack
         ? {
             track_id: selectedTrack.id,
@@ -2090,7 +2096,7 @@ setIsGenerating(false);
 
   try {
     await fetch(
-      "http://127.0.0.1:8000/api/branding/logo/placement",
+      `${import.meta.env.VITE_API_BASE_URL}/branding/logo`,
       {
         method: "POST",
         headers: {
@@ -2121,7 +2127,7 @@ setIsGenerating(false);
 
   try {
     await fetch(
-      "http://127.0.0.1:8000/api/branding/logo/placement",
+      `${import.meta.env.VITE_API_BASE_URL}/branding/logo/placement`,
       {
         method: "POST",
         headers: {

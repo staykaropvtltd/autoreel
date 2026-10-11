@@ -1,6 +1,8 @@
 from enum import Enum
+from typing import Literal
+import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.batch import BatchClip
 
@@ -48,78 +50,273 @@ class TransitionConfig(BaseModel):
     """Belongs to the INCOMING clip (the one this transition leads into)."""
 
     type: TransitionType = TransitionType.NONE
-    duration: float = 0.0
+    duration: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=5.0,
+        allow_inf_nan=False,
+    )
 
 
 class PlannedReelClip(BaseModel):
-    position: int
-    source_file: str
-    original_start: float
-    original_end: float
-    planned_start: float
-    planned_end: float
-    planned_duration: float
-    score: int
+    position: int = Field(
+        ge=1,
+        le=1000,
+    )
+
+    source_file: str = Field(
+        min_length=1,
+        max_length=255,
+    )
+
+    original_start: float = Field(
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    original_end: float = Field(
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    planned_start: float = Field(
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    planned_end: float = Field(
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    planned_duration: float = Field(
+        gt=0.0,
+        le=60.0,
+        allow_inf_nan=False,
+    )
+
+    score: int = Field(
+        ge=0,
+        le=100,
+    )
+
     shot_role: ShotRole
-    role_confidence: float
-    transition_in: TransitionConfig = TransitionConfig()
-    thumbnail_url: str | None = None
+
+    role_confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        allow_inf_nan=False,
+    )
+
+    transition_in: TransitionConfig = Field(
+        default_factory=TransitionConfig
+    )
+
+    thumbnail_url: str | None = Field(
+        default=None,
+        max_length=2048,
+    )
 
 
 class BrandingConfig(BaseModel):
-    # Not a real client name - a safe, generic placeholder. The actual brand
-    # identity always comes from the central config (assets/branding/
-    # brand.json, via app.services.brand_service) at plan-creation and
-    # render time; this default only covers a BrandingConfig constructed
-    # directly (e.g. in a test) without going through either of those.
-    brand_name: str = "Auto-Reel Studio"
-    brand_color: str | None = None  # e.g. "#c9a227" - used sparingly as an accent, never a full-screen overlay
-    logo_path: str | None = None
-    logo_position: str = "top_left"  # top_left | top_right | bottom_left | bottom_right
-    logo_size: int = 120  # pixel width; height scales proportionally
+    # Safe, generic placeholder.
+    brand_name: str = Field(
+        default="Auto-Reel Studio",
+        min_length=1,
+        max_length=100,
+    )
+
+    brand_color: str | None = Field(
+        default=None,
+        max_length=20,
+    )
+
+    logo_path: str | None = Field(
+        default=None,
+        max_length=2048,
+    )
+
+    logo_position: Literal[
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right",
+    ] = "top_left"
+
+    logo_size: int = Field(
+        default=120,
+        ge=40,
+        le=500,
+    )
+
     show_logo_at_start: bool = True
     show_logo_at_end: bool = False
     show_watermark: bool = False
-    intro_duration: float = 2.0
+
+    intro_duration: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=10.0,
+        allow_inf_nan=False,
+    )
+
+    @field_validator("brand_color")
+    @classmethod
+    def validate_brand_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        allowed_colors = {
+            "white",
+            "black",
+            "red",
+            "green",
+            "blue",
+            "yellow",
+            "orange",
+            "purple",
+            "pink",
+            "gray",
+            "grey",
+        }
+
+        if value.lower() in allowed_colors:
+            return value.lower()
+
+        if re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+            return value
+
+        raise ValueError("Invalid brand color")
 
 
 class ProductOverlayInfo(BaseModel):
-    product_name: str | None = None
-    material: str | None = None
-    color: str | None = None
-    product_code: str | None = None
-    price: str | None = None
-    category: str | None = None
+    product_name: str | None = Field(default=None, max_length=200)
+    material: str | None = Field(default=None, max_length=100)
+    color: str | None = Field(default=None, max_length=100)
+    product_code: str | None = Field(default=None, max_length=100)
+    price: str | None = Field(default=None, max_length=100)
+    category: str | None = Field(default=None, max_length=100)
 
 
 class FontConfig(BaseModel):
-    """Typography for overlays. font_family is a path to a font file; if it
-    doesn't exist at render time, the renderer falls back to a bundled
-    system font rather than failing.
-    """
+    """Typography for overlays."""
 
-    font_family: str | None = None
-    headline_size: int = 42
-    body_size: int = 32
-    price_size: int = 38
-    font_weight: str = "normal"  # normal | bold (best-effort; ignored if unsupported)
-    text_color: str = "white"
-    accent_color: str | None = None
+    font_family: str | None = Field(
+        default=None,
+        max_length=2048,
+    )
+
+    headline_size: int = Field(
+        default=42,
+        ge=12,
+        le=200,
+    )
+
+    body_size: int = Field(
+        default=32,
+        ge=12,
+        le=200,
+    )
+
+    price_size: int = Field(
+        default=38,
+        ge=12,
+        le=200,
+    )
+
+    font_weight: Literal[
+        "normal",
+        "bold",
+    ] = "normal"
+
+    text_color: str = Field(
+        default="white",
+        max_length=20,
+    )
+
+    accent_color: str | None = Field(
+        default=None,
+        max_length=20,
+    )
+
+    @field_validator("text_color", "accent_color")
+    @classmethod
+    def validate_font_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        allowed_colors = {
+            "white",
+            "black",
+            "red",
+            "green",
+            "blue",
+            "yellow",
+            "orange",
+            "purple",
+            "pink",
+            "gray",
+            "grey",
+        }
+
+        if value.lower() in allowed_colors:
+            return value.lower()
+
+        if re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+            return value
+
+        raise ValueError("Invalid font color")
 
 
 class MusicSelection(BaseModel):
-    """Phase 9: background music, fitted to the Reel's final duration.
-    volume is 0.0-1.0. loop_if_needed allows a shorter track to be looped
-    cleanly to cover the full duration instead of leaving silence.
-    """
+    """Background music fitted to the Reel's final duration."""
 
-    track_id: str
-    track_name: str
-    source_path: str
-    source_duration: float
-    start_time: float = 0.0
-    end_time: float | None = None
-    volume: float = 0.7
+    track_id: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    track_name: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+    source_path: str = Field(
+        min_length=1,
+        max_length=2048,
+    )
+
+    source_duration: float = Field(
+        gt=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    start_time: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    end_time: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    volume: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        allow_inf_nan=False,
+    )
+
     loop_if_needed: bool = True
     preserve_original_audio: bool = False
 
@@ -131,42 +328,140 @@ class MusicSelection(BaseModel):
 #   material_placement: selected_clip | detail_clip | beginning | end | none
 #   price_placement:    final_clip | end | beginning | none
 class OverlayConfig(BaseModel):
-    brand_placement: str = "beginning"
-    product_placement: str = "beginning"
-    material_placement: str = "none"
-    material_clip_position: int | None = None
-    price_placement: str = "none"
-    material_duration: float = 2.0
-    price_duration: float = 2.5
+    brand_placement: Literal[
+        "beginning",
+        "end",
+        "beginning_and_end",
+        "watermark",
+        "none",
+    ] = "beginning"
+
+    product_placement: Literal[
+        "beginning",
+        "end",
+        "none",
+    ] = "beginning"
+
+    material_placement: Literal[
+        "selected_clip",
+        "detail_clip",
+        "beginning",
+        "end",
+        "none",
+    ] = "none"
+
+    material_clip_position: int | None = Field(
+        default=None,
+        ge=1,
+        le=1000,
+    )
+
+    price_placement: Literal[
+        "final_clip",
+        "end",
+        "beginning",
+        "none",
+    ] = "none"
+
+    material_duration: float = Field(
+        default=2.0,
+        gt=0.0,
+        le=10.0,
+        allow_inf_nan=False,
+    )
+
+    price_duration: float = Field(
+        default=2.5,
+        gt=0.0,
+        le=10.0,
+        allow_inf_nan=False,
+    )
 
 
 class ReelPlan(BaseModel):
-    target_duration: float
-    estimated_duration: float
-    duration_difference: float
-    clips: list[PlannedReelClip]
-    processing_time_seconds: float
+    target_duration: float = Field(
+        gt=0.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
 
-    # Phase 8 additions - the ReelPlan is the single source of truth for the
-    # editor, so branding/product/overlay configuration and transition-aware
-    # duration accounting live here too.
-    branding: BrandingConfig = BrandingConfig()
-    product: ProductOverlayInfo = ProductOverlayInfo()
-    overlays: OverlayConfig = OverlayConfig()
-    font: FontConfig = FontConfig()
-    content_duration: float = 0.0
-    transition_overlap_duration: float = 0.0
-    estimated_final_duration: float = 0.0
+    estimated_duration: float = Field(
+        ge=0.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
 
-    # Phase 9 additions
+    duration_difference: float = Field(
+        ge=-300.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
+
+    clips: list[PlannedReelClip] = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    processing_time_seconds: float = Field(
+        ge=0.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+
+    branding: BrandingConfig = Field(
+        default_factory=BrandingConfig
+    )
+
+    product: ProductOverlayInfo = Field(
+        default_factory=ProductOverlayInfo
+    )
+
+    overlays: OverlayConfig = Field(
+        default_factory=OverlayConfig
+    )
+
+    font: FontConfig = Field(
+        default_factory=FontConfig
+    )
+
+    content_duration: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
+
+    transition_overlap_duration: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
+
+    estimated_final_duration: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
+
     music: MusicSelection | None = None
-    duration_status: str = "ok"  # "ok" | "insufficient_content"
 
-    # Phase 9 (branding revision) additions: reserved, real branded bumper
-    # segments prepended/appended to the render - NOT the same thing as
-    # branding.intro_duration above (which times a text/logo overlay drawn
-    # ON TOP of the first content clip). Default 0.0 so every ReelPlan built
-    # by hand in existing code/tests is unaffected; plan_reel() is the only
-    # place that sets these to real values for actual generated Reels.
-    intro_seconds: float = 0.0
-    outro_seconds: float = 0.0
+    duration_status: Literal[
+        "ok",
+        "insufficient_content",
+    ] = "ok"
+
+    intro_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=30.0,
+        allow_inf_nan=False,
+    )
+
+    outro_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=30.0,
+        allow_inf_nan=False,
+    )

@@ -324,7 +324,7 @@ export default function EditorScreen({
                 <div className="h-14 w-full bg-[var(--color-background)] flex items-center justify-center overflow-hidden">
                   {clip.thumbnail_url ? (
                     <img
-                      src={`http://localhost:8000${clip.thumbnail_url}`}
+                      src={`${(import.meta.env.VITE_API_BASE_URL as string).replace(/\/api\/?$/, "")}${clip.thumbnail_url}`}
                       alt=""
                       className="h-full w-full object-cover"
                     />

@@ -15,7 +15,7 @@ router = APIRouter()
 class AnalyzeRequest(BaseModel):
     job_id: str | None = None
     use_demo: bool = False
-    template_id: str | None = None
+    template_id: uuid.UUID | None = None
 
 
 def _run_analysis_job(job_id: str, video_paths: list[Path]) -> None:
@@ -39,7 +39,7 @@ def _run_analysis_job(job_id: str, video_paths: list[Path]) -> None:
             result=batch_result,
         )
     except Exception as exc:
-        update_analysis_job(job_id, status="failed", stage="failed", error=str(exc))
+        update_analysis_job(job_id, status="failed", stage="failed", error="Analysis failed. Please try again.")
 
 
 @router.post("/analysis/analyze")
@@ -70,7 +70,7 @@ def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -
 
     update_analysis_job(
     analysis_job_id,
-    template_id=request.template_id,
+    template_id=str(request.template_id) if request.template_id else None,
 )
 
     background_tasks.add_task(

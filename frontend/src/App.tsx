@@ -877,7 +877,7 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
               videoUrl:
   result.download_url.startsWith("http")
     ? result.download_url
-    : `http://localhost:8000${result.download_url}`,
+    : `${(import.meta.env.VITE_API_BASE_URL as string).replace(/\/api\/?$/, "")}${result.download_url}`,
 
               thumbnailUrl:
                 planClips[0]

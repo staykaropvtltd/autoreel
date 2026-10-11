@@ -75,7 +75,7 @@ def deduct_user_credits(request: CreditAmountRequest):
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
+            detail="Unable to process the credit request.",
         )
 
     return {

@@ -136,7 +136,7 @@ const templateInputRef =
     setTemplateUploading(true);
 
     const response = await fetch(
-      "http://127.0.0.1:8000/api/templates/upload",
+      `${import.meta.env.VITE_API_BASE_URL}/templates/upload`,
       {
         method: "POST",
         body: formData,

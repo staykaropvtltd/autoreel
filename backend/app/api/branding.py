@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 
 from app.services.brand_service import (
@@ -12,6 +13,8 @@ from app.services.brand_service import (
 )
 
 router = APIRouter()
+class LogoPlacementRequest(BaseModel):
+    placement: str
 
 ALLOWED_LOGO_EXTENSIONS = {
     ".png",
@@ -141,10 +144,15 @@ async def upload_brand_logo(
         "placement": placement,
     }
 @router.post("/branding/logo/placement")
-def update_logo_placement(placement: str) -> dict:
+
+def update_logo_placement(
+    request: LogoPlacementRequest,
+) -> dict:
     """
     Updates the logo placement without re-uploading the logo.
     """
+
+    placement = request.placement
 
     if placement not in {"start", "entire"}:
         raise HTTPException(

@@ -279,7 +279,7 @@ export default function ReelImageEditorWorkspace({
   // Preload logo image if set, or auto-fetch backend brand logo if empty
   useEffect(() => {
     if (!overlays.logoUrl) {
-      const defaultLogoUrl = "http://127.0.0.1:8000/api/branding/logo";
+      const defaultLogoUrl = `${import.meta.env.VITE_API_BASE_URL}/branding/logo`;
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.onload = () => {

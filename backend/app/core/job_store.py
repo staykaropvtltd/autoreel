@@ -54,15 +54,25 @@ def get_analysis_job(job_id: str) -> dict[str, Any] | None:
         return dict(job) if job is not None else None
 
 
-def create_reel_job(reel_id: str, response: dict[str, Any]) -> None:
+
+def create_reel_job(
+    reel_id: str,
+    response: dict[str, Any],
+    output_path: str,
+) -> None:
     with _lock:
-        _reel_jobs[reel_id] = {"status": "completed", "response": response}
+        _reel_jobs[reel_id] = {
+            "status": "completed",
+            "response": response,
+            "output_path": output_path,
+        }
 
 
 def get_reel_job(reel_id: str) -> dict[str, Any] | None:
     with _lock:
         job = _reel_jobs.get(reel_id)
         return dict(job) if job is not None else None
+
 
 def create_template_image(
     template_id: str,

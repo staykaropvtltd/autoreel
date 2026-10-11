@@ -4,6 +4,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from typing import Literal
+from app.services.music_service import resolve_music_track
 
 from app.services.credit_service import (
     get_balance,
@@ -46,8 +48,12 @@ from app.services.reel_planner import (
     extend_plan_for_transitions,
     plan_reel,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 from app.services.thumbnail_service import attach_thumbnails
 from app.services.video_processor import OutputValidationError
+
 
 
 THUMBNAIL_CACHE_DIR = (
@@ -67,18 +73,32 @@ RAW_UPLOADS_DIR = _PROJECT_ROOT / "storage" / "uploads" / "templates"
 TEMPLATE_IMAGES_DIR = _PROJECT_ROOT / "storage" / "templates"
 OUTPUTS_DIR = _PROJECT_ROOT / "storage" / "outputs"
 MUSIC_DIR = _PROJECT_ROOT / "assets" / "music"
+CUSTOM_MUSIC_DIR = _PROJECT_ROOT / "storage" / "music"
+
+MUSIC_LIBRARIES = [
+    (MUSIC_DIR, False),
+    (CUSTOM_MUSIC_DIR, True),
+]
 
 # Temporary user ID until authentication is implemented
 DEMO_USER_ID = "user_demo"
 
 
 class BrandRequest(BaseModel):
-    # Defaults to the central brand config (assets/branding/brand.json),
-    # never a hard-coded client name - see app.services.brand_service.
-    text: str | None = Field(default_factory=get_brand_name)
-    font_size: int = 42
-    font_color: str = "white"
-    position: str = "bottom"
+    text: str | None = Field(
+        default_factory=get_brand_name,
+        max_length=100,
+    )
+    font_size: int = Field(
+        default=42,
+        ge=12,
+        le=120,
+    )
+    font_color: str = Field(
+        default="#FFFFFF",
+        pattern=r"^#[0-9A-Fa-f]{6}$",
+    )
+    position: Literal["top", "bottom"] = "bottom"
 
 
 class ProductInfoRequest(BaseModel):
@@ -148,7 +168,26 @@ def _resolve_template_image(analysis_job_id: str | None) -> Path | None:
     if not template_id:
         return None
 
-    template_dir = TEMPLATE_IMAGES_DIR / template_id
+    # Validate template_id before using it as a filesystem path.
+    try:
+        template_uuid = uuid.UUID(str(template_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid template_id",
+        )
+
+    # Resolve the path and make sure it stays inside storage/templates.
+    templates_root = TEMPLATE_IMAGES_DIR.resolve()
+    template_dir = (
+        TEMPLATE_IMAGES_DIR / str(template_uuid)
+    ).resolve()
+
+    if not template_dir.is_relative_to(templates_root):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid template path",
+        )
 
     if not template_dir.exists():
         raise HTTPException(
@@ -214,6 +253,41 @@ def _get_candidate_pool(
         )
 
     return candidate_pool
+
+def _resolve_music_path(identifier: str | None) -> Path | None:
+    if not identifier:
+        return None
+
+    track = resolve_music_track(identifier, MUSIC_LIBRARIES)
+
+    if track is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected music track was not found",
+        )
+
+    path = Path(track["_path"]).resolve()
+
+    allowed_roots = [
+        MUSIC_DIR.resolve(),
+        CUSTOM_MUSIC_DIR.resolve(),
+    ]
+
+    if not any(path.is_relative_to(root) for root in allowed_roots):
+        logger.warning("Rejected music path outside allowed directories")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid music file location",
+        )
+
+    if not path.is_file():
+        logger.warning("Selected music file is missing: %s", path)
+        raise HTTPException(
+            status_code=400,
+            detail="Selected music track was not found",
+        )
+
+    return path
 
 
 @router.post("/reels/plan", response_model=ReelPlan)
@@ -336,19 +410,7 @@ def generate_reel(
         request.analysis_job_id
     )
 
-    music_path = None
-
-    if request.music_filename:
-        music_path = (
-            MUSIC_DIR
-            / safe_filename(request.music_filename)
-        )
-
-        if not music_path.exists():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Music file not found: {music_path}",
-            )
+    music_path = _resolve_music_path(request.music_filename)
 
     config = ReelCompositionConfig(
         min_total_duration=request.min_total_duration,
@@ -373,6 +435,7 @@ def generate_reel(
     # CREDIT CHECK & DEDUCTION
     # ============================================================
 
+    
     try:
         deduct_credits(
             DEMO_USER_ID,
@@ -380,10 +443,12 @@ def generate_reel(
         )
 
     except ValueError as exc:
+        logger.warning("Invalid reel request: %s", exc)
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
+            detail="Invalid reel request. Please check your input.",
         ) from exc
+
 
     # ============================================================
     # REEL GENERATION
@@ -418,32 +483,21 @@ def generate_reel(
             # only (stripping any directory components), same as the
             # legacy music_filename field just above.
             if compensated_plan.music is not None:
-
-                resolved_music_path = (
-                    MUSIC_DIR
-                    / safe_filename(
-                        Path(
-                            compensated_plan.music.source_path
-                        ).name
-                    )
+                resolved_music_path = _resolve_music_path(
+                    compensated_plan.music.source_path
                 )
 
-                if not resolved_music_path.exists():
+                if resolved_music_path is None:
                     raise HTTPException(
                         status_code=400,
-                        detail=(
-                            "Music file not found: "
-                            f"{resolved_music_path.name}"
-                        ),
+                        detail="Selected music track was not found",
                     )
 
                 compensated_plan = compensated_plan.model_copy(
                     update={
                         "music": compensated_plan.music.model_copy(
                             update={
-                                "source_path": str(
-                                    resolved_music_path
-                                )
+                                "source_path": str(resolved_music_path)
                             }
                         )
                     }
@@ -494,23 +548,23 @@ def generate_reel(
             REEL_GENERATION_COST,
         )
 
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
+    except ValueError as exc:
+        logger.warning("Reel request validation failed: %s", exc)
 
-    except FFmpegNotAvailableError as exc:
-
-        import traceback
-
-        print(
-            "!!! GENERATE REEL FFMPEG NOT AVAILABLE (503): "
-            f"{exc}"
+        refund_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
         )
 
-        traceback.print_exc()
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid reel request. Please check your input.",
+        ) from exc
 
-        # Refund because reel generation failed
+    
+    except FFmpegNotAvailableError as exc:
+        logger.exception("FFmpeg is unavailable during reel generation")
+
         refund_credits(
             DEMO_USER_ID,
             REEL_GENERATION_COST,
@@ -518,24 +572,15 @@ def generate_reel(
 
         raise HTTPException(
             status_code=503,
-            detail=str(exc),
+            detail="Video rendering service is unavailable. Please try again later.",
         ) from exc
 
     except (
         FFmpegProcessingError,
         OutputValidationError,
     ) as exc:
+        logger.exception("Reel rendering or output validation failed")
 
-        import traceback
-
-        print(
-            "!!! GENERATE REEL FFMPEG ERROR (500): "
-            f"{exc}"
-        )
-
-        traceback.print_exc()
-
-        # Refund because reel generation failed
         refund_credits(
             DEMO_USER_ID,
             REEL_GENERATION_COST,
@@ -543,21 +588,12 @@ def generate_reel(
 
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
+            detail="An unexpected error occurred while generating the reel.",
         ) from exc
 
-    except Exception as exc:
+    except Exception:
+        logger.exception("Unexpected error during reel generation")
 
-        import traceback
-
-        print(
-            "!!! GENERATE REEL UNHANDLED ERROR: "
-            f"{type(exc).__name__}: {exc}"
-        )
-
-        traceback.print_exc()
-
-        # Refund because reel generation failed
         refund_credits(
             DEMO_USER_ID,
             REEL_GENERATION_COST,
@@ -565,21 +601,23 @@ def generate_reel(
 
         raise
 
+
     # ============================================================
     # GENERATION SUCCESS
     # ============================================================
 
     response = ReelGenerateResponse(
-        **result.model_dump(),
-        reel_id=reel_id,
-        status="completed",
-        download_url=f"/api/reels/{reel_id}/download",
-    )
+    **result.model_dump(exclude={"output_path"}),
+    reel_id=reel_id,
+    status="completed",
+    download_url=f"/api/reels/{reel_id}/download",
+)
 
     create_reel_job(
-        reel_id,
-        response.model_dump(),
-    )
+    reel_id,
+    response.model_dump(),
+    str(output_path),
+)
 
     return response
 
@@ -597,7 +635,7 @@ def get_reel(
     if job is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Reel not found: {reel_id}",
+            detail=f"Reel not found",
         )
 
     return ReelGenerateResponse(
@@ -609,23 +647,30 @@ def get_reel(
 def download_reel(
     reel_id: str,
 ) -> FileResponse:
-
     job = get_reel_job(reel_id)
+
+    logger.info("Download requested for reel_id=%s", reel_id)
+    logger.info("Reel job found: %s", job is not None)
 
     if job is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Reel not found: {reel_id}",
+            detail="Reel not found",
         )
 
-    output_path = Path(
-        job["response"]["output_path"]
-    )
+    output_path = Path(job["output_path"])
 
-    if not output_path.exists():
+    logger.info("Download path: %s", output_path.resolve())
+    logger.info("Download file exists: %s", output_path.is_file())
+
+    if not output_path.is_file():
+        logger.warning(
+            "Reel output file missing for reel_id=%s",
+            reel_id,
+        )
         raise HTTPException(
             status_code=404,
-            detail=f"Reel file not found: {output_path}",
+            detail="Reel file not found",
         )
 
     return FileResponse(

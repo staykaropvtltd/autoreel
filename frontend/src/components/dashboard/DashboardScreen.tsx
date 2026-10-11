@@ -144,7 +144,9 @@ export default function DashboardScreen({
 
 const fetchCredits = async () => {
   try {
-    const response = await fetch("http://localhost:8000/api/credits");
+    const API_BASE = import.meta.env.VITE_API_BASE_URL;
+
+const response = await fetch(`${API_BASE}/credits`);
 
     if (!response.ok) {
       throw new Error("Failed to fetch credits");

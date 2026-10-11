@@ -28,6 +28,7 @@ has exactly one video + one audio stream, which concatenation requires.
 import tempfile
 import time
 import uuid
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,14 +76,52 @@ class InvalidTimestampError(ReelCompositionError):
 
 @dataclass
 class BrandConfig:
-    # Defaults to the central brand config (assets/branding/brand.json) at
-    # construction time, never a hard-coded client name.
     text: str | None = field(default_factory=get_brand_name)
     font_file: str | None = None
     font_size: int = 42
     font_color: str = "white"
-    position: str = "bottom"  # "top" | "bottom"
+    position: str = "bottom"
 
+    def __post_init__(self):
+        allowed_colors = {
+            "white",
+            "black",
+            "red",
+            "green",
+            "blue",
+            "yellow",
+            "orange",
+            "purple",
+            "pink",
+            "gray",
+            "grey",
+        }
+
+        if not isinstance(self.font_color, str):
+            raise ValueError("Invalid font color")
+
+        if (
+            self.font_color.lower() not in allowed_colors
+            and not re.fullmatch(
+                r"#[0-9A-Fa-f]{6}",
+                self.font_color,
+            )
+        ):
+            raise ValueError("Invalid font color")
+
+        if not isinstance(self.font_size, (int, float)):
+            raise ValueError("Invalid font size")
+
+        if not 12 <= self.font_size <= 200:
+            raise ValueError("Invalid font size")
+
+        allowed_positions = {
+            "top",
+            "bottom",
+        }
+
+        if self.position not in allowed_positions:
+            raise ValueError("Invalid brand position")
 
 @dataclass
 class ProductInfo:
@@ -160,11 +199,30 @@ def plan_reel_segments(
 
 
 def resolve_source_path(source_file: str, source_dir: str | Path) -> Path:
-    path = Path(source_dir) / source_file
-    if not path.exists():
-        raise MissingSourceVideoError(f"Source video not found: {path}")
-    return path
+    """
+    Safely resolve a client-provided source filename inside source_dir.
 
+    Prevents:
+    - ../ path traversal
+    - absolute-path escapes
+    - symlink-based escapes outside source_dir
+    """
+
+    source_root = Path(source_dir).resolve()
+    candidate = (source_root / source_file).resolve()
+
+    # Candidate must remain inside the intended source directory.
+    if not candidate.is_relative_to(source_root):
+        raise MissingSourceVideoError(
+            "Invalid source file path: file must remain inside the upload directory"
+        )
+
+    if not candidate.is_file():
+        raise MissingSourceVideoError(
+            f"Source video not found: {source_file}"
+        )
+
+    return candidate
 
 def validate_clip_timestamps(planned: PlannedClip, source_metadata: VideoMetadata) -> None:
     epsilon = 0.05
