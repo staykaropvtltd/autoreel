@@ -855,3 +855,108 @@ def test_render_final_overlay_ramp_audio_single_offset(tmp_path: Path):
     assert 7000 < avg_sample < 10000, f"Expected single offset sample (~8588), got {avg_sample}"
 
 
+def test_overlay_timing_and_logo_deduplication(tmp_path: Path):
+    """F-23: Overlay windows are shifted by template + intro, and logo is not drawn twice when bumper is active."""
+    from unittest.mock import patch
+
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    clip_file = source_dir / "clip1.mp4"
+    clip_file.write_bytes(b"\x00" * 100)
+
+    logo_file = tmp_path / "logo.png"
+    logo_file.write_bytes(b"\x00" * 100)
+
+    template_file = tmp_path / "template.png"
+    template_file.write_bytes(b"\x00" * 100)
+
+    captured_args = ()
+    captured_kwargs = {}
+
+    def mock_render_final_overlay(*args, **kwargs):
+        nonlocal captured_args
+        captured_args = args
+        captured_kwargs.update(kwargs)
+
+    with (
+        patch("app.services.reel_editor_renderer.get_video_metadata") as mock_meta,
+        patch("app.services.reel_editor_renderer.run_ffmpeg"),
+        patch("app.services.reel_editor_renderer.build_bumper_clip"),
+        patch("app.services.reel_editor_renderer.concatenate_clips"),
+        patch("app.services.reel_editor_renderer.render_final_overlay", side_effect=mock_render_final_overlay),
+        patch("app.services.reel_editor_renderer.get_logo_placement", return_value="start"),
+        patch("app.services.reel_editor_renderer.extract_clip"),
+        patch("app.services.reel_editor_renderer.validate_output") as mock_val,
+    ):
+        from app.services.video_metadata import VideoMetadata
+
+        mock_val.return_value = VideoMetadata(
+            filename="out.mp4",
+            duration=15.0,
+            width=1080,
+            height=1920,
+            fps=30.0,
+            video_codec="h264",
+            audio_codec="aac",
+            format="mp4",
+            file_size=1000,
+        )
+
+        def meta_side_effect(path):
+            p = str(path)
+            dur = 0.5 if "template" in p else (2.0 if "bumper" in p else 5.0)
+            return VideoMetadata(
+                filename="v.mp4",
+                duration=dur,
+                width=1080,
+                height=1920,
+                fps=30.0,
+                video_codec="h264",
+                audio_codec="aac",
+                format="mp4",
+                file_size=1000,
+            )
+
+        mock_meta.side_effect = meta_side_effect
+
+        clip = PlannedReelClip(
+            position=1,
+            source_file="clip1.mp4",
+            original_start=0.0,
+            original_end=5.0,
+            planned_start=0.0,
+            planned_end=5.0,
+            planned_duration=5.0,
+            score=90,
+            shot_role=ShotRole.HERO,
+            role_confidence=0.9,
+        )
+        plan = ReelPlan(
+            target_duration=10.0,
+            estimated_duration=5.0,
+            duration_difference=0.0,
+            clips=[clip],
+            processing_time_seconds=0.0,
+            intro_seconds=2.0,
+            outro_seconds=2.0,
+            branding=BrandingConfig(brand_name="TestBrand", logo_path=str(logo_file), brand_placement="start"),
+        )
+
+        compose_reel_from_editor_plan(
+            plan,
+            source_dir=source_dir,
+            output_path=tmp_path / "out.mp4",
+            template_image_path=template_file,
+        )
+
+    # render_final_overlay(reel_path, out_path, overlay_filter, logo_path, logo_windows, target_duration)
+    overlay_filter = captured_args[2]
+    logo_windows = captured_args[4]
+
+    # Logo must not be drawn as overlay when bumper is active (intro_actual > 0)
+    assert logo_windows == [], "Expected empty logo_windows when bumper already rendered logo"
+    # Content overlay window must start at 2.5s (0.5s template + 2.0s intro)
+    assert "between(t,2.500," in overlay_filter, f"Expected overlay starting at 2.500s, got: {overlay_filter}"
+
+
+

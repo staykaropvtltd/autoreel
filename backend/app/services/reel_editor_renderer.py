@@ -889,11 +889,11 @@ def compose_reel_from_editor_plan(
                 "price",
             }
         ]
-        if intro_actual > 0:
-            # Shift every content overlay window by the intro's real
-            # duration - the content no longer starts at t=0 in the final
-            # render, the bumper does.
-            windows = [{**w, "start": w["start"] + intro_actual, "end": w["end"] + intro_actual} for w in windows]
+        total_content_offset = template_actual + intro_actual
+        if total_content_offset > 0:
+            # Shift every content overlay window by the combined template + intro duration
+            # so text starts at the actual content start time in the final render.
+            windows = [{**w, "start": w["start"] + total_content_offset, "end": w["end"] + total_content_offset} for w in windows]
         # brand_color (section 11: "use it for... price accent") is the
         # default accent source; an explicit font.accent_color always wins if
         # the user set one directly.
@@ -937,22 +937,22 @@ def compose_reel_from_editor_plan(
                     # ---------------------------------------------------
                     # START OF REEL
                     # ---------------------------------------------------
-                    # First 0.5s = full-screen template.
-                    # Logo starts when the actual reel starts.
-
-                    logo_start = template_actual
-
-                    logo_end = min(
-                        logo_start + 2.0,
-                        final_render_duration,
-                    )
-
-                    logo_windows = [
-                        (
-                            logo_start,
-                            logo_end,
+                    # If intro bumper exists, it already rendered the logo.
+                    # Otherwise, show logo for 2s starting at template_actual.
+                    if intro_actual > 0:
+                        logo_windows = []
+                    else:
+                        logo_start = template_actual
+                        logo_end = min(
+                            logo_start + 2.0,
+                            final_render_duration,
                         )
-                    ]
+                        logo_windows = [
+                            (
+                                logo_start,
+                                logo_end,
+                            )
+                        ]
 
                 logger.info(
                     "[BRANDING] Logo: %s", logo_path
