@@ -25,12 +25,15 @@ instead synthesizes silence for audio-less segments so every extracted clip
 has exactly one video + one audio stream, which concatenation requires.
 """
 
+import logging
 import tempfile
 import time
 import uuid
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.batch import BatchClip
 from app.schemas.reel import PlannedClip, ReelResult
@@ -54,8 +57,20 @@ DEFAULT_MAX_TOTAL_DURATION = 15.0
 DEFAULT_MIN_FRAGMENT_DURATION = 0.5
 DEFAULT_TRANSITION_DURATION = 0.3
 
-_WINDOWS_DEFAULT_FONT = "C:/Windows/Fonts/arial.ttf"
-_LINUX_DEFAULT_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+_DEFAULT_FONT_CANDIDATES = [
+    # Windows
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/georgia.ttf",
+    # Linux (Debian/Ubuntu/Alpine/RedHat)
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/Library/Fonts/Arial.ttf",
+]
 
 
 class ReelCompositionError(RuntimeError):
@@ -243,9 +258,10 @@ def validate_clip_timestamps(planned: PlannedClip, source_metadata: VideoMetadat
 
 
 def _default_font_file() -> str | None:
-    for candidate in (_WINDOWS_DEFAULT_FONT, _LINUX_DEFAULT_FONT):
+    for candidate in _DEFAULT_FONT_CANDIDATES:
         if Path(candidate).exists():
             return candidate
+    logger.warning("No system font found in candidate paths for video text rendering.")
     return None
 
 
@@ -266,6 +282,7 @@ def build_overlay_filter(config: ReelCompositionConfig) -> str | None:
     """
     font_file = config.brand.font_file or _default_font_file()
     if font_file is None:
+        logger.warning("No font file found; skipping brand overlay drawtext filter.")
         return None
 
     lines = []

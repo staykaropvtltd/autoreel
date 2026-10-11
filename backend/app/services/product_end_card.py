@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 from app.schemas.story import BrandingConfig, ProductOverlayInfo
 from app.services.reel_composer import run_ffmpeg
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -34,6 +37,10 @@ def _load_font(size: int, bold: bool = False):
             [
                 "C:/Windows/Fonts/georgiab.ttf",
                 "C:/Windows/Fonts/segoeuib.ttf",
+                "C:/Windows/Fonts/arialbd.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
             ]
         )
     else:
@@ -41,13 +48,22 @@ def _load_font(size: int, bold: bool = False):
             [
                 "C:/Windows/Fonts/georgia.ttf",
                 "C:/Windows/Fonts/segoeui.ttf",
+                "C:/Windows/Fonts/arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf",
             ]
         )
 
     for candidate in candidates:
         if Path(candidate).exists():
-            return ImageFont.truetype(candidate, size=size)
+            try:
+                return ImageFont.truetype(candidate, size=size)
+            except Exception as exc:
+                logger.warning("Failed loading font %s: %s", candidate, exc)
 
+    logger.warning("No TrueType font found for product end card (size=%d, bold=%s); falling back to default bitmap font", size, bold)
     return ImageFont.load_default()
 
 
@@ -169,6 +185,7 @@ def create_product_end_card(
     width: int,
     height: int,
     shop_name: str | None = None,
+    cta_text: str | None = None,
 ) -> Path:
 
     image = Image.new(
@@ -497,9 +514,15 @@ def create_product_end_card(
         width=2,
     )
 
+    active_cta = (
+        cta_text
+        or getattr(product, "cta_text", None)
+        or getattr(brand_config, "cta_text", None)
+        or "Wear Your Story"
+    )
     _draw_centered_text(
         draw,
-        "Wear Your Story",
+        active_cta,
         cta_y + 20,
         cta_font,
         END_CARD_PRIMARY,

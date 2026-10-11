@@ -866,6 +866,8 @@ def compose_reel_from_editor_plan(
         # must never crash the render - fall back to a bundled system font.
         configured_font = reel_plan.font.font_family
         font_file = configured_font if configured_font and Path(configured_font).exists() else _default_font_file()
+        if font_file is None:
+            logger.warning("No font file available for timed text overlays; text overlays will be skipped.")
         windows = resolve_overlay_windows(
             sorted_story_clips, content_timeline, reel_plan.branding, reel_plan.product, reel_plan.overlays
         )
