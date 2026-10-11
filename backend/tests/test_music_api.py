@@ -75,3 +75,13 @@ def test_preview_music_does_not_expose_arbitrary_paths(tmp_path: Path, monkeypat
     # a filesystem read outside MUSIC_DIR.
     response = client.get("/api/music/..%2F..%2Fsecrets/preview")
     assert response.status_code in (404, 400)
+
+
+def test_upload_music_rejects_non_audio(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(music_module, "CUSTOM_MUSIC_DIR", tmp_path)
+    response = client.post(
+        "/api/music/upload",
+        files={"file": ("fake.mp3", b"not-a-real-audio-file", "audio/mpeg")},
+    )
+    assert response.status_code == 400
+    assert "Invalid or unsupported audio" in response.json()["detail"]
