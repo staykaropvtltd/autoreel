@@ -546,15 +546,12 @@ def generate_reel(
         MissingSourceVideoError,
         InvalidTimestampError,
     ) as exc:
-
-        import traceback
-
-        print(
-            "!!! GENERATE REEL CLIENT ERROR (400): "
-            f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "Generate reel client error (400): %s: %s",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
         )
-
-        traceback.print_exc()
 
         # Refund because reel generation failed
         refund_credits(
@@ -605,7 +602,7 @@ def generate_reel(
             detail="An unexpected error occurred while generating the reel.",
         ) from exc
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Unexpected error during reel generation")
 
         refund_credits(
@@ -613,7 +610,10 @@ def generate_reel(
             REEL_GENERATION_COST,
         )
 
-        raise
+        raise HTTPException(
+            status_code=500,
+            detail="An unexpected error occurred while generating the reel.",
+        ) from exc
 
 
     # ============================================================

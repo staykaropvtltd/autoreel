@@ -17,6 +17,8 @@ DEMO_RAW_DIR = _PROJECT_ROOT / "assets" / "demo" / "raw"
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm"}
 MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024
+MAX_FILES_PER_UPLOAD = 30
+MAX_TOTAL_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB
 _CHUNK_SIZE = 1024 * 1024
 
 
@@ -25,14 +27,26 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
+    if len(files) > MAX_FILES_PER_UPLOAD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files uploaded (maximum {MAX_FILES_PER_UPLOAD})",
+        )
+
     job_id = str(uuid.uuid4())
     job_dir = RAW_UPLOADS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
     uploaded_files = []
+    seen_filenames = set()
+    total_size = 0
     try:
         for upload in files:
             filename = safe_filename(upload.filename or "")
+            if filename in seen_filenames:
+                raise HTTPException(status_code=400, detail=f"Duplicate filename in upload: {filename}")
+            seen_filenames.add(filename)
+
             extension = Path(filename).suffix.lower()
             if extension not in ALLOWED_EXTENSIONS:
                 raise HTTPException(status_code=400, detail=f"Unsupported video format: {filename}")
@@ -42,10 +56,15 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
             with open(destination, "wb") as out_file:
                 while chunk := await upload.read(_CHUNK_SIZE):
                     size += len(chunk)
+                    total_size += len(chunk)
                     if size > MAX_FILE_SIZE_BYTES:
                         out_file.close()
                         destination.unlink(missing_ok=True)
                         raise HTTPException(status_code=400, detail=f"File too large: {filename}")
+                    if total_size > MAX_TOTAL_UPLOAD_BYTES:
+                        out_file.close()
+                        destination.unlink(missing_ok=True)
+                        raise HTTPException(status_code=400, detail="Total upload size exceeded (maximum 1 GB)")
                     out_file.write(chunk)
 
             if size == 0:

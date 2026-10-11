@@ -11,9 +11,12 @@ can't express. Nothing in reel_composer.py's existing functions is
 rewritten - only reused.
 """
 
+import logging
 import tempfile
 import time
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from app.services.product_end_card import (
@@ -945,22 +948,22 @@ def compose_reel_from_editor_plan(
                         )
                     ]
 
-                print(
-                    f"[BRANDING] Logo: {logo_path}"
+                logger.info(
+                    "[BRANDING] Logo: %s", logo_path
                 )
 
-                print(
-                    f"[BRANDING] Placement: {logo_placement}"
+                logger.info(
+                    "[BRANDING] Placement: %s", logo_placement
                 )
 
-                print(
-                    f"[BRANDING] Logo windows: {logo_windows}"
+                logger.info(
+                    "[BRANDING] Logo windows: %s", logo_windows
                 )
 
             else:
-                print(
-                    f"[BRANDING] Logo file not found: "
-                    f"{candidate_logo}"
+                logger.warning(
+                    "[BRANDING] Logo file not found: %s",
+                    candidate_logo,
                 )
 
         # If the configured logo file does not exist, the renderer simply

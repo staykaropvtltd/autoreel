@@ -47,6 +47,8 @@ def probe(input_path: Path) -> dict:
         "ffprobe",
         "-v",
         "quiet",
+        "-protocol_whitelist",
+        "file,crypto,data",
         "-print_format",
         "json",
         "-show_format",
@@ -59,6 +61,8 @@ def probe(input_path: Path) -> dict:
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             check=False,
         )
@@ -95,6 +99,8 @@ def run_ffmpeg(args: list[str]) -> None:
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=600,
             check=False,
         )
