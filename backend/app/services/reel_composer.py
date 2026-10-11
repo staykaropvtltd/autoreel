@@ -207,9 +207,12 @@ def resolve_source_path(source_file: str, source_dir: str | Path) -> Path:
     - absolute-path escapes
     - symlink-based escapes outside source_dir
     """
+    if not source_file or ".." in source_file or Path(source_file).is_absolute():
+        raise MissingSourceVideoError("Invalid source file path")
 
     source_root = Path(source_dir).resolve()
-    candidate = (source_root / source_file).resolve()
+    safe_name = Path(source_file).name
+    candidate = (source_root / safe_name).resolve()
 
     # Candidate must remain inside the intended source directory.
     if not candidate.is_relative_to(source_root):
@@ -219,7 +222,7 @@ def resolve_source_path(source_file: str, source_dir: str | Path) -> Path:
 
     if not candidate.is_file():
         raise MissingSourceVideoError(
-            f"Source video not found: {source_file}"
+            f"Source video not found: {safe_name}"
         )
 
     return candidate

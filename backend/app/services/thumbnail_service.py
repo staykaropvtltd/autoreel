@@ -9,6 +9,7 @@ import hashlib
 from pathlib import Path
 
 from app.services.ffmpeg_service import run_ffmpeg
+from app.services.reel_composer import resolve_source_path
 
 THUMBNAIL_WIDTH = 320
 
@@ -47,7 +48,7 @@ def attach_thumbnails(clips, source_dir: Path, cache_dir: Path, url_prefix: str 
     """
     for clip in clips:
         try:
-            source_path = source_dir / clip.source_file
+            source_path = resolve_source_path(clip.source_file, source_dir)
             timestamp = clip.planned_start + min(0.3, clip.planned_duration / 2)
             thumb_path = get_or_create_thumbnail(source_path, timestamp, cache_dir)
             clip.thumbnail_url = f"{url_prefix}/{thumb_path.stem}"

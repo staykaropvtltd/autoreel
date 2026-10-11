@@ -132,6 +132,15 @@ def test_resolve_source_path_raises_for_missing_file(tmp_path: Path):
         resolve_source_path("does_not_exist.mp4", tmp_path)
 
 
+def test_resolve_source_path_rejects_path_traversal_and_absolute_paths(tmp_path: Path):
+    with pytest.raises(MissingSourceVideoError, match="Invalid source file path"):
+        resolve_source_path("../secret.mp4", tmp_path)
+    with pytest.raises(MissingSourceVideoError, match="Invalid source file path"):
+        resolve_source_path("../../etc/passwd", tmp_path)
+    with pytest.raises(MissingSourceVideoError, match="Invalid source file path"):
+        resolve_source_path("C:\\Windows\\System32\\cmd.exe", tmp_path)
+
+
 def test_compose_reel_raises_for_missing_source(tmp_path: Path):
     clips = [_batch_clip("does_not_exist.mp4", 0, 3, score=90)]
 
