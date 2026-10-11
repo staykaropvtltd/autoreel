@@ -13,7 +13,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  Clock,
   Download,
   Edit3,
   ExternalLink,
@@ -38,7 +37,6 @@ import {
   reelFileUrl,
   startAnalysis,
   uploadMusic,
-  uploadBrandLogo,
   uploadVideos,
   getCredits,
 } from "../../api";
@@ -246,7 +244,7 @@ interface PhotoshootUploadsPageProps {
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 export default function PhotoshootUploadsPage({
-  onBackToLibrary,
+  onBackToLibrary: _onBackToLibrary,
   onOpenInEditor,
   onAddToLibrary,
 }: PhotoshootUploadsPageProps) {

@@ -38,9 +38,7 @@ import {
   History,
   ArrowUpRight,
   ArrowLeft,
-  Home,
   Image as ImageIcon,
-  Upload,
 } from "lucide-react";
 
 import "./Dashboard.css";

@@ -11,7 +11,6 @@ import {
   Globe,
   Image as ImageIcon,
   Layers,
-  Maximize2,
   MoveLeft,
   MoveRight,
   Music,
@@ -22,11 +21,9 @@ import {
   Search,
   Sliders,
   Trash2,
-  Type,
   Upload,
   Volume2,
   VolumeX,
-  X,
 } from "lucide-react";
 import { listMusic, musicPreviewUrl } from "../../api";
 import type { MusicTrack } from "../../types";
