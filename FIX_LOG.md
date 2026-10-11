@@ -30,5 +30,6 @@
 | F-21 | FIXED | backend/app/services/reel_editor_renderer.py:703,776,838-850 | tracked has_template to insert bumper at index 0 when template is absent, test_compose_reel_with_bumpers passes | none |
 | F-23 | FIXED | backend/app/services/reel_editor_renderer.py:892-896,938-955, backend/tests/test_reel_editor_renderer.py:858-950 | overlay shifted by template_actual + intro_actual, logo_windows empty when bumper renders logo, test passed | test_overlay_timing_and_logo_deduplication |
 | F-24 | FIXED | backend/app/services/reel_composer.py:326-329, backend/tests/test_reel_composer.py:270-281 | added x and y centering expressions to zoompan filter, test passed | test_build_zoom_filter_includes_centering_expressions |
+| F-25 | FIXED | backend/app/services/video_metadata.py:19-58, backend/tests/test_metadata.py:35-85 | parsed tags.rotate & side_data display matrix, swapped width/height on 90/270 degree rotation, tests passed | test_get_video_metadata_rotates_90_degrees, test_get_video_metadata_rotates_with_side_data_matrix |
 
 
