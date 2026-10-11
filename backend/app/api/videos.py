@@ -1,3 +1,4 @@
+import shutil
 import uuid
 from pathlib import Path
 
@@ -29,28 +30,32 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
     job_dir.mkdir(parents=True, exist_ok=True)
 
     uploaded_files = []
-    for upload in files:
-        filename = safe_filename(upload.filename or "")
-        extension = Path(filename).suffix.lower()
-        if extension not in ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"Unsupported video format: {filename}")
+    try:
+        for upload in files:
+            filename = safe_filename(upload.filename or "")
+            extension = Path(filename).suffix.lower()
+            if extension not in ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=400, detail=f"Unsupported video format: {filename}")
 
-        destination = job_dir / filename
-        size = 0
-        with open(destination, "wb") as out_file:
-            while chunk := await upload.read(_CHUNK_SIZE):
-                size += len(chunk)
-                if size > MAX_FILE_SIZE_BYTES:
-                    out_file.close()
-                    destination.unlink(missing_ok=True)
-                    raise HTTPException(status_code=400, detail=f"File too large: {filename}")
-                out_file.write(chunk)
+            destination = job_dir / filename
+            size = 0
+            with open(destination, "wb") as out_file:
+                while chunk := await upload.read(_CHUNK_SIZE):
+                    size += len(chunk)
+                    if size > MAX_FILE_SIZE_BYTES:
+                        out_file.close()
+                        destination.unlink(missing_ok=True)
+                        raise HTTPException(status_code=400, detail=f"File too large: {filename}")
+                    out_file.write(chunk)
 
-        if size == 0:
-            destination.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail=f"Empty file: {filename}")
+            if size == 0:
+                destination.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail=f"Empty file: {filename}")
 
-        uploaded_files.append({"filename": filename, "size": size})
+            uploaded_files.append({"filename": filename, "size": size})
+    except Exception:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
 
     create_upload_job(job_id, uploaded_files)
     return {"job_id": job_id, "status": "uploaded", "files": uploaded_files}

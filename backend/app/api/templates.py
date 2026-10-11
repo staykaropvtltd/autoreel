@@ -1,3 +1,4 @@
+import shutil
 import uuid
 from pathlib import Path
 
@@ -98,10 +99,13 @@ async def upload_template_image(
                 out_file.write(chunk)
 
     except HTTPException:
+        destination.unlink(missing_ok=True)
+        shutil.rmtree(template_dir, ignore_errors=True)
         raise
 
     except Exception as exc:
         destination.unlink(missing_ok=True)
+        shutil.rmtree(template_dir, ignore_errors=True)
 
         raise HTTPException(
             status_code=500,
@@ -111,6 +115,7 @@ async def upload_template_image(
     # Reject empty files
     if size == 0:
         destination.unlink(missing_ok=True)
+        shutil.rmtree(template_dir, ignore_errors=True)
 
         raise HTTPException(
             status_code=400,
