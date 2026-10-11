@@ -250,3 +250,20 @@ def test_compose_reel_single_clip_skips_concat_step(tmp_path: Path, synthetic_vi
 
     assert output_path.exists()
     assert result.clip_count == 1
+
+
+def test_font_config_rejects_injected_color():
+    from pydantic import ValidationError
+    from app.schemas.story import FontConfig
+
+    with pytest.raises(ValidationError):
+        FontConfig(text_color="white,movie=evil")
+
+
+def test_planned_clip_rejects_negative_duration():
+    from pydantic import ValidationError
+    from app.schemas.reel import PlannedClip
+
+    with pytest.raises(ValidationError):
+        PlannedClip(source_file="v.mp4", start_time=0.0, end_time=2.0, duration=-3.0, score=80)
+

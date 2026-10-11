@@ -109,24 +109,24 @@ class ProductInfoRequest(BaseModel):
 
 
 class GenerateReelRequest(BaseModel):
-    selected_clips: list[BatchClip] = []
+    selected_clips: list[BatchClip] = Field(default=[], max_length=100)
     reel_plan: ReelPlan | None = None
-    output_filename: str | None = None
-    analysis_job_id: str | None = None
-    min_total_duration: float = 10.0
-    max_total_duration: float = 15.0
-    transition: str = "cut"
-    music_filename: str | None = None
+    output_filename: str | None = Field(default=None, max_length=255)
+    analysis_job_id: str | None = Field(default=None, max_length=255)
+    min_total_duration: float = Field(default=10.0, gt=0.0, le=300.0, allow_inf_nan=False)
+    max_total_duration: float = Field(default=15.0, gt=0.0, le=300.0, allow_inf_nan=False)
+    transition: Literal["cut", "fade", "none", "zoom_in", "zoom_out", "slide_left", "slide_right"] = "cut"
+    music_filename: str | None = Field(default=None, max_length=255)
     brand: BrandRequest = Field(default_factory=BrandRequest)
     product: ProductInfoRequest | None = None
 
 
 class PlanReelRequest(BaseModel):
-    analysis_job_id: str
-    target_duration: float = 15.0
-    min_clip_duration: float = 1.0
-    max_clip_duration: float = 8.0
-    min_quality_score: float = 50.0
+    analysis_job_id: str = Field(min_length=1, max_length=255)
+    target_duration: float = Field(default=15.0, gt=0.0, le=300.0, allow_inf_nan=False)
+    min_clip_duration: float = Field(default=1.0, gt=0.0, le=60.0, allow_inf_nan=False)
+    max_clip_duration: float = Field(default=8.0, gt=0.0, le=60.0, allow_inf_nan=False)
+    min_quality_score: float = Field(default=50.0, ge=0.0, le=100.0, allow_inf_nan=False)
 
 
 def _resolve_source_dir(analysis_job_id: str | None) -> Path:
