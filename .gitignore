@@ -61,16 +61,8 @@ $RECYCLE.BIN/
 
 
 # ---------- Storage (runtime data, not source) ----------
-storage/uploads/*
-storage/temp/*
-storage/outputs/*
-storage/music/*
-storage/branding/*
-!storage/uploads/.gitkeep
-!storage/temp/.gitkeep
-!storage/outputs/.gitkeep
-!storage/music/.gitkeep
-!storage/branding/.gitkeep
+storage/**
+!storage/**/.gitkeep
 
 
 # ---------- AI coding tools ----------
