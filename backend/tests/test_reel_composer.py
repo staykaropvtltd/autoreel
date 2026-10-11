@@ -267,3 +267,15 @@ def test_planned_clip_rejects_negative_duration():
     with pytest.raises(ValidationError):
         PlannedClip(source_file="v.mp4", start_time=0.0, end_time=2.0, duration=-3.0, score=80)
 
+
+def test_build_zoom_filter_includes_centering_expressions():
+    from app.schemas.story import TransitionConfig, TransitionType
+    from app.services.reel_composer import build_zoom_filter
+
+    transition = TransitionConfig(type=TransitionType.ZOOM_IN, duration=1.0)
+    filter_str = build_zoom_filter(transition, clip_duration=3.0, fps=30, target_width=1080, target_height=1920)
+    assert filter_str is not None
+    assert "x='iw/2-(iw/zoom/2)'" in filter_str
+    assert "y='ih/2-(ih/zoom/2)'" in filter_str
+
+

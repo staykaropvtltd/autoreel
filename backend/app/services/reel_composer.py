@@ -324,7 +324,9 @@ def build_zoom_filter(
             f"if(lte(on,{window_frames}),{zoom_peak}-{zoom_range}*(on-{half})/{half},1.0))"
         )
 
-    return f"zoompan=z='{expr}':d=1:s={target_width}x{target_height}:fps={fps}"
+    x_expr = "iw/2-(iw/zoom/2)"
+    y_expr = "ih/2-(ih/zoom/2)"
+    return f"zoompan=z='{expr}':x='{x_expr}':y='{y_expr}':d=1:s={target_width}x{target_height}:fps={fps}"
 
 
 def build_fade_in_filter(transition: TransitionConfig, clip_duration: float) -> tuple[str | None, str | None]:
