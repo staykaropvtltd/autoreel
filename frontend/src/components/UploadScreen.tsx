@@ -583,7 +583,7 @@ const templateInputRef =
             transition-opacity
           "
         >
-          Upload Product Videos{" "}
+          Analyze footage{" "}
           {files.length > 0
             ? `(${files.length} file${
                 files.length > 1
