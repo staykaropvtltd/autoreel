@@ -29,10 +29,15 @@ MAX_MUSIC_SIZE_BYTES = 50 * 1024 * 1024
 MAX_CUSTOM_MUSIC_STORAGE_BYTES = 500 * 1024 * 1024
 _MUSIC_CHUNK_SIZE = 1024 * 1024
 
-LIBRARIES = [
-    (MUSIC_DIR, False),
-    (CUSTOM_MUSIC_DIR, True),
-]
+def get_libraries() -> list[tuple[Path, bool]]:
+    return [
+        (MUSIC_DIR, False),
+        (CUSTOM_MUSIC_DIR, True),
+    ]
+
+
+# Backward-compatibility alias
+LIBRARIES = get_libraries()
 UPLOAD_RATE_LIMIT = 5
 UPLOAD_RATE_WINDOW_SECONDS = 60
 
@@ -58,7 +63,7 @@ def check_upload_rate_limit(client_ip: str) -> None:
 
 @router.get("/music")
 def list_music() -> list[dict]:
-    tracks = discover_music_libraries(LIBRARIES)
+    tracks = discover_music_libraries(get_libraries())
 
     # Never return internal server filesystem paths to the client.
     return [
@@ -69,7 +74,7 @@ def list_music() -> list[dict]:
 
 @router.get("/music/{track_id}/preview")
 def preview_music(track_id: str) -> FileResponse:
-    track = find_track_by_id(LIBRARIES, track_id)
+    track = find_track_by_id(get_libraries(), track_id)
 
     if track is None:
         raise HTTPException(status_code=404, detail="Track not found")

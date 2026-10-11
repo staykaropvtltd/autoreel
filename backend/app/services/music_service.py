@@ -39,13 +39,22 @@ def track_id_for(filename: str, is_custom: bool = False) -> str:
             return str(uuid.UUID(stem))
         except ValueError:
             pass
-
-    return str(
-        uuid.uuid5(
-            _TRACK_NAMESPACE,
-            f"{'custom' if is_custom else 'builtin'}:{filename}",
+        return str(
+            uuid.uuid5(
+                _TRACK_NAMESPACE,
+                f"custom:{filename}",
+            )
         )
-    )
+
+    return stem.lower().replace(" ", "_").replace("-", "_")
+
+
+def discover_music_library(music_dir: Path | str) -> list[dict]:
+    """Discover tracks from a single directory (for single-directory discovery & test compatibility)."""
+    return [
+        {k: v for k, v in t.items() if k not in ("_path", "is_custom")}
+        for t in discover_music_libraries([(Path(music_dir), False)])
+    ]
 
 
 def display_name_for(filename: str) -> str:
@@ -99,6 +108,25 @@ def validate_audio_file(path: Path) -> dict:
     }
 
 
+_AUDIO_METADATA_CACHE: dict[tuple[str, int, float], dict] = {}
+
+
+def get_cached_audio_info(path: Path) -> dict:
+    """Return validated audio info, caching results keyed by (path, size, mtime)."""
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise ValueError(f"Cannot stat file: {path}") from exc
+
+    cache_key = (str(path.resolve()), stat.st_size, stat.st_mtime)
+    if cache_key in _AUDIO_METADATA_CACHE:
+        return _AUDIO_METADATA_CACHE[cache_key]
+
+    info = validate_audio_file(path)
+    _AUDIO_METADATA_CACHE[cache_key] = info
+    return info
+
+
 def discover_music_libraries(
     libraries: list[tuple[Path, bool]],
 ) -> list[dict]:
@@ -117,7 +145,7 @@ def discover_music_libraries(
                 continue
 
             try:
-                audio_info = validate_audio_file(path)
+                audio_info = get_cached_audio_info(path)
             except Exception:
                 # Do not let one broken file break the entire library.
                 continue
@@ -146,6 +174,26 @@ def find_track_by_id(
     libraries: list[tuple[Path, bool]],
     track_id: str,
 ) -> dict | None:
+    # Direct lookup for custom tracks if track_id is a UUID filename
+    for music_dir, is_custom in libraries:
+        if is_custom and music_dir.exists():
+            for ext in SUPPORTED_MUSIC_EXTENSIONS:
+                candidate = music_dir / f"{track_id}{ext}"
+                if candidate.is_file():
+                    try:
+                        audio_info = get_cached_audio_info(candidate)
+                        return {
+                            "id": track_id,
+                            "filename": candidate.name,
+                            "display_name": _read_display_name(candidate),
+                            "duration": audio_info["duration"],
+                            "format": ext.lstrip(".").lower(),
+                            "is_custom": True,
+                            "_path": candidate.resolve(),
+                        }
+                    except Exception:
+                        pass
+
     for track in discover_music_libraries(libraries):
         if track["id"] == track_id:
             return track
