@@ -32,5 +32,6 @@
 | F-24 | FIXED | backend/app/services/reel_composer.py:326-329, backend/tests/test_reel_composer.py:270-281 | added x and y centering expressions to zoompan filter, test passed | test_build_zoom_filter_includes_centering_expressions |
 | F-25 | FIXED | backend/app/services/video_metadata.py:19-58, backend/tests/test_metadata.py:35-85 | parsed tags.rotate & side_data display matrix, swapped width/height on 90/270 degree rotation, tests passed | test_get_video_metadata_rotates_90_degrees, test_get_video_metadata_rotates_with_side_data_matrix |
 | F-27 | FIXED | backend/app/services/product_end_card.py:34-58,185,514-526, reel_composer.py:57-73,258-285, reel_editor_renderer.py:868 | cross-platform font fallbacks added, warning logs on missing fonts, cta_text configurable | none |
+| F-59 | FIXED | backend/app/services/music_service.py:100-195, backend/app/api/music.py:32-75 | cached probe metadata by (path, size, mtime) reducing scan from 8.8s to 0.005s, direct custom track lookup, tests passed | none |
 
 
