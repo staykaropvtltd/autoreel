@@ -28,5 +28,6 @@
 | F-04 | FIXED | backend/app/api/credits.py:17-86 | deleted /credits/add and /deduct, 0 frontend callers, returns 404 | none |
 | F-20 | FIXED | backend/app/services/reel_editor_renderer.py:410-418,504-515,542-546, backend/tests/test_reel_editor_renderer.py:717-760 | removed duplicate -ss flag, honored music.end_time, fixed video mapping without filters, ramp-audio regression test passed | test_render_final_overlay_honors_end_time, test_render_final_overlay_ramp_audio_single_offset |
 | F-21 | FIXED | backend/app/services/reel_editor_renderer.py:703,776,838-850 | tracked has_template to insert bumper at index 0 when template is absent, test_compose_reel_with_bumpers passes | none |
+| F-23 | FIXED | backend/app/services/reel_editor_renderer.py:892-896,938-955, backend/tests/test_reel_editor_renderer.py:858-950 | overlay shifted by template_actual + intro_actual, logo_windows empty when bumper renders logo, test passed | test_overlay_timing_and_logo_deduplication |
 
 
