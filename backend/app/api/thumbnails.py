@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -13,7 +14,7 @@ THUMBNAIL_CACHE_DIR = _PROJECT_ROOT / "storage" / "temp" / "thumbnails"
 def get_thumbnail(key: str) -> FileResponse:
     # Our own cache keys are pure hex hashes - reject anything else outright
     # rather than resolving it against the filesystem.
-    if not key.isalnum():
+    if not re.fullmatch(r"^[0-9a-fA-F]{16,64}$", key):
         raise HTTPException(status_code=400, detail="Invalid thumbnail key")
 
     path = THUMBNAIL_CACHE_DIR / f"{key}.jpg"

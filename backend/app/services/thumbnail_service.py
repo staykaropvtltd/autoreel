@@ -14,14 +14,21 @@ from app.services.reel_composer import resolve_source_path
 THUMBNAIL_WIDTH = 320
 
 
-def thumbnail_cache_key(source_file: str, timestamp: float) -> str:
-    raw = f"{source_file}@{timestamp:.2f}"
+def thumbnail_cache_key(source_file: str, timestamp: float, job_id: str | None = None) -> str:
+    job_prefix = f"{job_id}:" if job_id else ""
+    raw = f"{job_prefix}{source_file}@{timestamp:.2f}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def get_or_create_thumbnail(source_path: Path, timestamp: float, cache_dir: Path) -> Path:
+def get_or_create_thumbnail(
+    source_path: Path,
+    timestamp: float,
+    cache_dir: Path,
+    job_id: str | None = None,
+) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = thumbnail_cache_key(source_path.name, timestamp)
+    inferred_job = job_id or (source_path.parent.name if source_path.parent.name else None)
+    key = thumbnail_cache_key(source_path.name, timestamp, inferred_job)
     thumb_path = cache_dir / f"{key}.jpg"
 
     if thumb_path.exists():
