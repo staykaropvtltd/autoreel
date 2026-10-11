@@ -8,8 +8,11 @@ Note: this is shared demo branding until authenticated per-user storage
 is integrated.
 """
 
+import io
 import json
+import threading
 from pathlib import Path
+from PIL import Image
 
 from app.schemas.branding import BrandConfig
 
@@ -23,6 +26,7 @@ USER_BRAND_CONFIG_PATH = USER_BRANDING_DIR / "brand.json"
 
 _FALLBACK = BrandConfig(name="Auto-Reel Studio")
 _ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
+_brand_lock = threading.Lock()
 
 
 def _read_json(path: Path) -> dict:
@@ -34,13 +38,14 @@ def _read_json(path: Path) -> dict:
 
 
 def _write_user_config(data: dict) -> None:
-    USER_BRANDING_DIR.mkdir(parents=True, exist_ok=True)
-    temp_path = USER_BRAND_CONFIG_PATH.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(data, indent=2),
-        encoding="utf-8",
-    )
-    temp_path.replace(USER_BRAND_CONFIG_PATH)
+    with _brand_lock:
+        USER_BRANDING_DIR.mkdir(parents=True, exist_ok=True)
+        temp_path = USER_BRAND_CONFIG_PATH.with_suffix(".tmp")
+        temp_path.write_text(
+            json.dumps(data, indent=2),
+            encoding="utf-8",
+        )
+        temp_path.replace(USER_BRAND_CONFIG_PATH)
 
 
 def get_brand_config() -> BrandConfig:
@@ -102,24 +107,34 @@ def save_user_logo(file_bytes: bytes, extension: str, placement: str) -> Path:
     if extension not in {".png", ".jpg", ".jpeg", ".webp"}:
         raise ValueError("Unsupported logo extension")
 
-    USER_BRANDING_DIR.mkdir(parents=True, exist_ok=True)
-    logo_path = USER_BRANDING_DIR / f"logo{extension}"
+    try:
+        with Image.open(io.BytesIO(file_bytes)) as img:
+            img.verify()
+            width, height = img.size
+            if width * height > 25_000_000:
+                raise ValueError("Logo dimensions exceed maximum allowable size")
+    except Exception as exc:
+        raise ValueError("Invalid image file content") from exc
 
-    # Write the new logo before removing older runtime logo variants.
-    temp_path = USER_BRANDING_DIR / f"logo_upload_tmp{extension}"
-    temp_path.write_bytes(file_bytes)
-    temp_path.replace(logo_path)
+    with _brand_lock:
+        USER_BRANDING_DIR.mkdir(parents=True, exist_ok=True)
+        logo_path = USER_BRANDING_DIR / f"logo{extension}"
 
-    for existing in USER_BRANDING_DIR.glob("logo.*"):
-        if existing != logo_path and existing.is_file():
-            existing.unlink(missing_ok=True)
+        # Write the new logo before removing older runtime logo variants.
+        temp_path = USER_BRANDING_DIR / f"logo_upload_tmp{extension}"
+        temp_path.write_bytes(file_bytes)
+        temp_path.replace(logo_path)
 
-    config = _read_json(USER_BRAND_CONFIG_PATH)
-    config["logo"] = logo_path.name
-    config["logo_placement"] = placement
-    _write_user_config(config)
+        for existing in USER_BRANDING_DIR.glob("logo.*"):
+            if existing != logo_path and existing.is_file():
+                existing.unlink(missing_ok=True)
 
-    return logo_path
+        config = _read_json(USER_BRAND_CONFIG_PATH)
+        config["logo"] = logo_path.name
+        config["logo_placement"] = placement
+        _write_user_config(config)
+
+        return logo_path
 
 
 def get_logo_placement() -> str:

@@ -131,6 +131,11 @@ async def upload_brand_logo(
             extension=extension,
             placement=placement,
         )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
