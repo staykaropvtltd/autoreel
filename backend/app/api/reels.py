@@ -117,7 +117,7 @@ class GenerateReelRequest(BaseModel):
     max_total_duration: float = 15.0
     transition: str = "cut"
     music_filename: str | None = None
-    brand: BrandRequest = BrandRequest()
+    brand: BrandRequest = Field(default_factory=BrandRequest)
     product: ProductInfoRequest | None = None
 
 
