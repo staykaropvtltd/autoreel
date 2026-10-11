@@ -518,7 +518,7 @@ export default function AuthPage({
 
       {/* 3. SUBTLE COMPACT FOOTER */}
       <footer className="w-full py-2 text-center text-[10px] font-mono opacity-40 shrink-0">
-        KALADHAR STUDIO · 256-BIT ENCRYPTED
+        KALADHAR STUDIO
       </footer>
     </div>
   );
