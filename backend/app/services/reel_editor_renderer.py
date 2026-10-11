@@ -701,6 +701,7 @@ def compose_reel_from_editor_plan(
         # ---------------------------------------------------------------
 
         template_actual = 0.0
+        has_template = False
 
         if template_image_path is not None:
             template_image_path = Path(template_image_path)
@@ -773,6 +774,7 @@ def compose_reel_from_editor_plan(
                 render_measured_clips = (
                     [template_clip] + render_measured_clips
                 )
+                has_template = True
                 
         
 
@@ -835,17 +837,19 @@ def compose_reel_from_editor_plan(
             )
 
             # Template first → bumper second → actual reel
+            insert_idx = 1 if has_template else 0
             render_clip_paths = (
-                render_clip_paths[:1]
+                render_clip_paths[:insert_idx]
                 + [intro_path]
-                + render_clip_paths[1:]
+                + render_clip_paths[insert_idx:]
             )
 
             render_measured_clips = (
-                render_measured_clips[:1]
+                render_measured_clips[:insert_idx]
                 + [intro_clip]
-                + render_measured_clips[1:]
+                + render_measured_clips[insert_idx:]
             )
+            render_timeline = compute_timeline_plan(render_measured_clips)
 
             
             
