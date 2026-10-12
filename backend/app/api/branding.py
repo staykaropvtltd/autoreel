@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi.responses import FileResponse
 
 from app.services.brand_service import (
@@ -13,8 +14,34 @@ from app.services.brand_service import (
 )
 
 router = APIRouter()
+
+
 class LogoPlacementRequest(BaseModel):
-    placement: str
+    model_config = ConfigDict(extra="forbid")
+
+    placement: Literal["start", "entire"]
+
+
+class BrandingResponse(BaseModel):
+    name: str
+    tagline: str | None
+    logo_url: str
+    logo_placement: Literal["start", "entire"]
+    primary_color: str | None
+    secondary_color: str | None
+    text_color: str | None
+
+
+class BrandLogoUploadResponse(BaseModel):
+    status: Literal["uploaded"]
+    filename: str
+    logo_url: str
+    placement: Literal["start", "entire"]
+
+
+class LogoPlacementResponse(BaseModel):
+    status: Literal["updated"]
+    placement: Literal["start", "entire"]
 
 ALLOWED_LOGO_EXTENSIONS = {
     ".png",
@@ -26,23 +53,23 @@ ALLOWED_LOGO_EXTENSIONS = {
 MAX_LOGO_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-@router.get("/branding")
-def get_branding() -> dict:
+@router.get("/branding", response_model=BrandingResponse)
+def get_branding() -> BrandingResponse:
     """
     Returns the current branding configuration.
     """
 
     config = get_brand_config()
 
-    return {
-        "name": config.name,
-        "tagline": config.tagline,
-        "logo_url": "/api/branding/logo",
-        "logo_placement": get_logo_placement(),
-        "primary_color": config.primary_color,
-        "secondary_color": config.secondary_color,
-        "text_color": config.text_color,
-    }
+    return BrandingResponse(
+        name=config.name,
+        tagline=config.tagline,
+        logo_url="/api/branding/logo",
+        logo_placement=get_logo_placement(),
+        primary_color=config.primary_color,
+        secondary_color=config.secondary_color,
+        text_color=config.text_color,
+    )
 
 
 @router.get("/branding/logo")
@@ -77,11 +104,11 @@ def get_logo() -> FileResponse:
     )
 
 
-@router.post("/branding/logo")
+@router.post("/branding/logo", response_model=BrandLogoUploadResponse)
 async def upload_brand_logo(
     file: UploadFile = File(...),
     placement: str = Form("start"),
-) -> dict:
+) -> BrandLogoUploadResponse:
     """
     Uploads or replaces the user's brand logo.
 
@@ -142,28 +169,23 @@ async def upload_brand_logo(
             detail="Failed to save brand logo.",
         ) from exc
 
-    return {
-        "status": "uploaded",
-        "filename": logo_path.name,
-        "logo_url": "/api/branding/logo",
-        "placement": placement,
-    }
-@router.post("/branding/logo/placement")
+    return BrandLogoUploadResponse(
+        status="uploaded",
+        filename=logo_path.name,
+        logo_url="/api/branding/logo",
+        placement=placement,
+    )
 
+
+@router.post("/branding/logo/placement", response_model=LogoPlacementResponse)
 def update_logo_placement(
     request: LogoPlacementRequest,
-) -> dict:
+) -> LogoPlacementResponse:
     """
     Updates the logo placement without re-uploading the logo.
     """
 
     placement = request.placement
-
-    if placement not in {"start", "entire"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid logo placement. Use 'start' or 'entire'.",
-        )
 
     try:
         set_logo_placement(placement)
@@ -173,7 +195,4 @@ def update_logo_placement(
             detail="Failed to update logo placement.",
         ) from exc
 
-    return {
-        "status": "updated",
-        "placement": placement,
-    }
+    return LogoPlacementResponse(status="updated", placement=placement)

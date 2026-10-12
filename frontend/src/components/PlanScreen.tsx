@@ -12,8 +12,12 @@ import type {
 
 interface PlanScreenProps {
   targetDuration: number;
+  estimatedFinalDuration: number;
+  templateSeconds: number;
   introSeconds: number;
   outroSeconds: number;
+  endCardSeconds: number;
+  durationStatus: string;
   clips: PlannedReelClip[];
   files: File[];
   onRemove: (index: number) => void;
@@ -40,8 +44,12 @@ const ROLE_LABEL: Record<ShotRole, string> = {
 
 export default function PlanScreen({
   targetDuration,
+  estimatedFinalDuration,
+  templateSeconds,
   introSeconds,
   outroSeconds,
+  endCardSeconds,
+  durationStatus,
   clips,
   files,
   onRemove,
@@ -120,9 +128,6 @@ export default function PlanScreen({
     0
   );
 
-  const estimatedTotal =
-    introSeconds + contentDuration + outroSeconds;
-
   return (
     <div className="max-w-2xl w-full mx-auto px-4 py-10 space-y-6">
       {/* Header */}
@@ -133,60 +138,59 @@ export default function PlanScreen({
 
         <p className="text-[var(--color-text-secondary)] text-sm">
           {clips.length} clip{clips.length !== 1 ? "s" : ""} of product
-          content, framed by your branded intro and outro
+          content in the planned final reel
         </p>
       </div>
 
       {/* Duration Summary */}
-      {(introSeconds > 0 || outroSeconds > 0) && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h3 className="text-sm font-medium text-[var(--color-text-primary)] mb-3">
-            {targetDuration}s Reel
-          </h3>
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h3 className="text-sm font-medium text-[var(--color-text-primary)] mb-3">
+          {targetDuration}s Reel
+        </h3>
 
-          <dl className="space-y-1.5 text-sm">
+        <dl className="space-y-1.5 text-sm">
+          {templateSeconds > 0 && (
             <div className="flex justify-between">
-              <dt className="text-[var(--color-text-secondary)]">
-                Intro
-              </dt>
-
-              <dd className="text-[var(--color-text-primary)]">
-                {introSeconds.toFixed(1)}s
-              </dd>
+              <dt className="text-[var(--color-text-secondary)]">Template</dt>
+              <dd className="text-[var(--color-text-primary)]">{templateSeconds.toFixed(1)}s</dd>
             </div>
+          )}
 
+          {introSeconds > 0 && (
             <div className="flex justify-between">
-              <dt className="text-[var(--color-text-secondary)]">
-                Product Content
-              </dt>
-
-              <dd className="text-[var(--color-text-primary)]">
-                {contentDuration.toFixed(1)}s
-              </dd>
+              <dt className="text-[var(--color-text-secondary)]">Intro</dt>
+              <dd className="text-[var(--color-text-primary)]">{introSeconds.toFixed(1)}s</dd>
             </div>
+          )}
 
+          <div className="flex justify-between">
+            <dt className="text-[var(--color-text-secondary)]">Product Content</dt>
+            <dd className="text-[var(--color-text-primary)]">{contentDuration.toFixed(1)}s</dd>
+          </div>
+
+          {outroSeconds > 0 && (
             <div className="flex justify-between">
-              <dt className="text-[var(--color-text-secondary)]">
-                Outro
-              </dt>
-
-              <dd className="text-[var(--color-text-primary)]">
-                {outroSeconds.toFixed(1)}s
-              </dd>
+              <dt className="text-[var(--color-text-secondary)]">Outro</dt>
+              <dd className="text-[var(--color-text-primary)]">{outroSeconds.toFixed(1)}s</dd>
             </div>
+          )}
 
-            <div className="flex justify-between pt-1.5 mt-1.5 border-t border-[var(--color-border)] font-medium">
-              <dt className="text-[var(--color-text-primary)]">
-                Total
-              </dt>
+          <div className="flex justify-between">
+            <dt className="text-[var(--color-text-secondary)]">End card</dt>
+            <dd className="text-[var(--color-text-primary)]">{endCardSeconds.toFixed(1)}s</dd>
+          </div>
 
-              <dd className="text-[var(--color-text-primary)]">
-                {estimatedTotal.toFixed(1)}s
-              </dd>
-            </div>
-          </dl>
-        </div>
-      )}
+          <div className="flex justify-between pt-1.5 mt-1.5 border-t border-[var(--color-border)] font-medium">
+            <dt className="text-[var(--color-text-primary)]">Estimated total</dt>
+            <dd className="text-[var(--color-text-primary)]">{estimatedFinalDuration.toFixed(1)}s</dd>
+          </div>
+        </dl>
+        {durationStatus === "insufficient_content" && (
+          <p className="mt-3 text-xs text-[var(--color-text-secondary)]">
+            Available footage is shorter than the requested total duration.
+          </p>
+        )}
+      </div>
             {/* Background Music */}
       <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
         <div className="mb-4">

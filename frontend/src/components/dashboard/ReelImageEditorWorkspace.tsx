@@ -99,7 +99,7 @@ export interface AudioConfig {
 export interface ManualReelProject {
   id: string;
   title: string;
-  category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+  category: string;
   slides: ImageSlide[];
   overlays: OverlayConfig;
   audio: AudioConfig;
@@ -111,7 +111,7 @@ interface ReelImageEditorWorkspaceProps {
   onSaveToLibrary: (savedReel: {
     id: string;
     title: string;
-    category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+    category: string;
     durationSeconds: number;
     resolution: string;
     videoUrl: string;
@@ -147,11 +147,12 @@ export default function ReelImageEditorWorkspace({
      PROJECT STATE
      ======================================================= */
   const [projectTitle, setProjectTitle] = useState(
-    initialProject?.title || "Royal Ethnic Silk Reel"
+    initialProject?.title || "Untitled Reel"
   );
-  const [category, setCategory] = useState<
-    "Sarees" | "Lehengas" | "Kurtis" | "Bridal"
-  >(initialProject?.category || "Sarees");
+  const [category, setCategory] = useState(
+    initialProject?.category || "Product"
+  );
+  const [editorError, setEditorError] = useState<string | null>(null);
 
   // Strictly initialize slides with user-provided images only — NO phantom or dummy fallback!
   const [slides, setSlides] = useState<ImageSlide[]>(
@@ -187,7 +188,7 @@ export default function ReelImageEditorWorkspace({
       ctaText: "EXCLUSIVE BRIDAL DROP",
       showCtaBadge: true,
       showEndCard: true,
-      endCardText: "Book Your Bridal Consultation",
+  endCardText: "Discover more",
       endCardSubtext: "DM on Instagram or Visit Our Flagship Atelier",
     }
   );
@@ -859,7 +860,7 @@ export default function ReelImageEditorWorkspace({
     });
 
     if (hasNonImage) {
-      alert(
+      setEditorError(
         "Only image files (.jpg, .jpeg, .png, .webp) can be added as slides. Videos are not supported in the image reel editor. Please use Photoshoot Uploads for video footage."
       );
     }
@@ -872,7 +873,7 @@ export default function ReelImageEditorWorkspace({
 
   const handleRemoveSlide = (idx: number) => {
     if (slides.length <= 1) {
-      alert("A reel must have at least 1 slide.");
+      setEditorError("A reel must have at least 1 slide.");
       return;
     }
     setSlides((prev) => prev.filter((_, i) => i !== idx));
@@ -1051,10 +1052,11 @@ export default function ReelImageEditorWorkspace({
   const handleExportReel = async () => {
     const canvas = canvasRef.current;
     if (!canvas || slides.length === 0) {
-      alert("Please ensure you have at least 1 photo slide to export.");
+      setEditorError("Please ensure you have at least 1 photo slide to export.");
       return;
     }
 
+    setEditorError(null);
     setIsExporting(true);
     setIsPlaying(false);
     setExportProgress(10);
@@ -1211,9 +1213,8 @@ export default function ReelImageEditorWorkspace({
 
       onSaveToLibrary(savedReel);
       setIsExporting(false);
-    } catch (err) {
-      console.error("Export error:", err);
-      alert("Export failed. Please try again.");
+    } catch {
+      setEditorError("Export failed. Please try again.");
       setIsExporting(false);
     }
   };
@@ -1232,6 +1233,22 @@ export default function ReelImageEditorWorkspace({
 
   return (
     <div className="reel-editor-workspace">
+      {editorError && (
+        <div
+          role="alert"
+          className="mx-4 mt-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+        >
+          <span>{editorError}</span>
+          <button
+            type="button"
+            onClick={() => setEditorError(null)}
+            aria-label="Dismiss error"
+            className="ml-3 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {/* ===================================================
           TOP NAVIGATION & STUDIO BAR
           =================================================== */}
@@ -1253,27 +1270,21 @@ export default function ReelImageEditorWorkspace({
               value={projectTitle}
               onChange={(e) => setProjectTitle(e.target.value)}
               className="workspace-title-input"
-              placeholder="Untitled Ethnic Reel..."
+              placeholder="Untitled Reel..."
             />
 
             <div className="workspace-meta-row">
               <select
                 value={category}
-                onChange={(e) =>
-                  setCategory(
-                    e.target.value as
-                      | "Sarees"
-                      | "Lehengas"
-                      | "Kurtis"
-                      | "Bridal"
-                  )
-                }
+                onChange={(e) => setCategory(e.target.value)}
                 className="workspace-category-select"
               >
-                <option value="Sarees">Sarees</option>
-                <option value="Lehengas">Lehengas</option>
-                <option value="Kurtis">Kurtis</option>
-                <option value="Bridal">Bridal</option>
+                <option value="Product">Product</option>
+                <option value="Apparel">Apparel</option>
+                <option value="Accessories">Accessories</option>
+                <option value="Beauty">Beauty</option>
+                <option value="Home">Home</option>
+                <option value="Other">Other</option>
               </select>
 
               <span className="workspace-badge">9:16 VERTICAL REEL</span>
@@ -1412,7 +1423,18 @@ export default function ReelImageEditorWorkspace({
               slides.map((slide, idx) => (
                 <div
                   key={slide.id}
+                  role="group"
+                  tabIndex={0}
+                  aria-keyshortcuts="Enter Space"
+                  aria-label={`Slide ${idx + 1}: ${slide.name}. ${idx === selectedSlideIndex ? "Selected." : "Not selected."} Press Enter or Space to select.`}
                   onClick={() => setSelectedSlideIndex(idx)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedSlideIndex(idx);
+                    }
+                  }}
                   className={`filmstrip-slide-card ${
                     idx === selectedSlideIndex ? "active" : ""
                   }`}
@@ -2646,7 +2668,7 @@ export default function ReelImageEditorWorkspace({
                                 <span className="mono">
                                   {track.duration
                                     ? `${Math.round(track.duration)}s`
-                                    : "Ethnic Fusion"}
+                                    : "Audio track"}
                                 </span>
                               </div>
 

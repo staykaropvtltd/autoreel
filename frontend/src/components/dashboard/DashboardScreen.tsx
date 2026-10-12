@@ -7,6 +7,7 @@ import ReelImageEditorWorkspace, {
 import PhotoshootUploadsPage from "./PhotoshootUploadsPage";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import IOKnob from "../landing/IOKnob";
 import Magnetic from "../Magnetic";
 
@@ -50,7 +51,7 @@ import "./Dashboard.css";
 export interface ReelProject {
   id: string;
   title: string;
-  category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+  category: string;
   durationSeconds: number;
   resolution: string;
   videoUrl: string;
@@ -198,23 +199,14 @@ useEffect(() => {
             return [];
           }
 
-          return parsed.map((p, idx) => {
-            if (
-              p.videoUrl?.includes(
-                "commondatastorage.googleapis.com"
-              ) ||
-              !p.videoUrl
-            ) {
-              const fallbackIdx = (idx % 4) + 1;
-
-              return {
-                ...p,
-                videoUrl: `/sample_reel_${fallbackIdx}.mp4`,
-              };
-            }
-
-            return p;
-          });
+          return parsed.map((p) => ({
+            ...p,
+            // Older builds substituted sample videos for unavailable reels.
+            // Clear those known demo URLs instead of showing unrelated footage.
+            videoUrl: /^\/?sample_reel_\d+\.mp4(?:[?#].*)?$/i.test(p.videoUrl || "")
+              ? ""
+              : p.videoUrl || "",
+          }));
         }
       }
     } catch {
@@ -240,6 +232,8 @@ useEffect(() => {
   "library" | "upload" | "collections" | "previous" | "credits" | "settings"| "brand-logo"
 >("library");
 
+  const [showSamplePreview, setShowSamplePreview] = useState(false);
+
   const [selectedCategory, setSelectedCategory] =
     useState<string>("All");
 
@@ -256,6 +250,12 @@ useEffect(() => {
 
   const [activeCinemaReel, setActiveCinemaReel] =
     useState<ReelProject | null>(null);
+  const [cinemaVideoUnavailable, setCinemaVideoUnavailable] = useState(false);
+  const cinemaDialogRef = useDialogFocus<HTMLDivElement>(!!activeCinemaReel, () => setActiveCinemaReel(null));
+
+  useEffect(() => {
+    setCinemaVideoUnavailable(false);
+  }, [activeCinemaReel?.videoUrl]);
 
   const [playingCardId, setPlayingCardId] =
     useState<string | null>(null);
@@ -314,16 +314,19 @@ useEffect(() => {
     useState(false);
   const [pendingProject, setPendingProject] = useState<{
   title: string;
-  category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+  category: string;
 } | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+  const createReelDialogRef = useDialogFocus<HTMLDivElement>(newReelModalOpen, () => setNewReelModalOpen(false));
+  const confirmationDialogRef = useDialogFocus<HTMLDivElement>(!!pendingConfirmation, () => setPendingConfirmation(null));
 
   const [newReelTitle, setNewReelTitle] =
     useState("");
 
-  const [newReelCategory, setNewReelCategory] =
-    useState<
-      "Sarees" | "Lehengas" | "Kurtis" | "Bridal"
-    >("Sarees");
+  const [newReelCategory, setNewReelCategory] = useState("Product");
 
  const handleConfirmCreateReel = (
   e?: React.FormEvent
@@ -331,7 +334,7 @@ useEffect(() => {
   e?.preventDefault();
 
   const finalTitle =
-    newReelTitle.trim() || "Untitled Ethnic Reel";
+    newReelTitle.trim() || "Untitled Reel";
 
   setPendingProject({
     title: finalTitle,
@@ -350,10 +353,7 @@ useEffect(() => {
 
   const [inlineTitle, setInlineTitle] = useState("");
 
-  const [inlineCategory, setInlineCategory] =
-    useState<
-      "Sarees" | "Lehengas" | "Kurtis" | "Bridal"
-    >("Sarees");
+  const [inlineCategory, setInlineCategory] = useState("Product");
 
   /* =======================================================
      REEL STUDIO LAUNCHER: IMAGE UPLOADER (IMAGES ONLY)
@@ -434,7 +434,7 @@ useEffect(() => {
   }));
 
   handleOpenManualEditor({
-    title: inlineTitle.trim() || "Royal Banarasi Silk Reel",
+    title: inlineTitle.trim() || "Untitled Reel",
     category: inlineCategory,
     slides: customSlides,
   });
@@ -469,18 +469,21 @@ const [profileBrand, setProfileBrand] = useState(() => {
 
     if (saved) {
       const profile = JSON.parse(saved);
+      const savedBrand = profile.brand?.trim();
 
       return (
-        profile.brand ||
-        user?.brandName ||
-        "Boutique Studio"
+        (savedBrand && !["Boutique Studio", "Ethnic Studio"].includes(savedBrand)
+          ? savedBrand
+          : "") ||
+        (user?.brandName === "Ethnic Studio" ? "" : user?.brandName) ||
+        "Your Studio"
       );
     }
   } catch {
     // Ignore invalid saved profile
   }
 
-  return user?.brandName || "Boutique Studio";
+  return (user?.brandName === "Ethnic Studio" ? "" : user?.brandName) || "Your Studio";
 });
 
 const displayName = profileName;
@@ -609,11 +612,9 @@ const handleSaveProfile = (
   ) => {
     e?.stopPropagation();
 
-    if (
-      confirm(
-        "Remove this Reel from your library?"
-      )
-    ) {
+    setPendingConfirmation({
+      message: "Remove this Reel from your library?",
+      onConfirm: () => {
       setProjects((prev) =>
         prev.filter((p) => p.id !== id)
       );
@@ -625,7 +626,8 @@ const handleSaveProfile = (
       if (playingCardId === id) {
         setPlayingCardId(null);
       }
-    }
+      },
+    });
   };
 
   /* =======================================================
@@ -633,15 +635,14 @@ const handleSaveProfile = (
      ======================================================= */
 
   const handleClearLibrary = () => {
-    if (
-      confirm(
-        "Reset library to empty? (You can test the fresh new user state)"
-      )
-    ) {
+    setPendingConfirmation({
+      message: "Reset library to empty? (You can test the fresh new user state)",
+      onConfirm: () => {
       setProjects([]);
 
       localStorage.removeItem(storageKey);
-    }
+      },
+    });
   };
 
   /* =======================================================
@@ -649,6 +650,7 @@ const handleSaveProfile = (
      ======================================================= */
 
    const handleLoadSampleProjects = () => {
+  setShowSamplePreview(true);
   setActiveTab("previous");
 };
 
@@ -792,7 +794,7 @@ const handleSaveProfile = (
     <span>Previous Works</span>
 
     <span className="nav-count">
-      {projects.length || SAMPLE_PROJECTS_PRESET.length}
+      {projects.length}
     </span>
   </button>
 
@@ -806,7 +808,7 @@ const handleSaveProfile = (
   >
     <CreditCard />
 
-    <span>Credits</span>
+    <span>Demo credits</span>
 
     <span className="nav-small-label">
   {credits !== null ? credits : "..."}
@@ -909,10 +911,7 @@ const handleSaveProfile = (
       setActiveTab("library");
       setPendingProject(null);
     }}
-    onContinue={(logoFile, logoPlacement) => {
-      console.log("Logo:", logoFile);
-      console.log("Placement:", logoPlacement);
-
+    onContinue={() => {
       if (!pendingProject) return;
 
       onCreateNewReel(
@@ -928,6 +927,7 @@ const handleSaveProfile = (
   ) : activeTab === "previous" ? (
    <PreviousWorksPage
   projects={projects}
+  showSamplePreview={showSamplePreview}
   isLight={isLight}
   onOpenLibrary={() => setActiveTab("library")}
   onOpenCinema={(project) => {
@@ -1189,7 +1189,7 @@ const handleSaveProfile = (
                       onChange={(e) =>
                         setInlineTitle(e.target.value)
                       }
-                      placeholder="e.g. Banarasi Katan Silk Saree · Festive Drop"
+                      placeholder="Enter a reel title"
                       className="project-input"
                     />
 
@@ -1216,10 +1216,12 @@ const handleSaveProfile = (
 
                       {(
                         [
-                          "Sarees",
-                          "Lehengas",
-                          "Kurtis",
-                          "Bridal",
+                          "Product",
+                          "Apparel",
+                          "Accessories",
+                          "Beauty",
+                          "Home",
+                          "Other",
                         ] as const
                       ).map((cat) => (
                         <button
@@ -1399,7 +1401,7 @@ const handleSaveProfile = (
 
                             <span>
                               {project.productPrice ||
-                                "Ethnic Reel"}
+                                "Reel"}
                             </span>
                           </div>
                         </div>
@@ -1423,10 +1425,8 @@ const handleSaveProfile = (
                           <Maximize2 />
                         </button>
 
-                        <a
-                          href={
-                            project.videoUrl
-                          }
+                        {project.videoUrl ? <a
+                          href={project.videoUrl}
                           download={`${project.title
                             .toLowerCase()
                             .replace(
@@ -1438,10 +1438,15 @@ const handleSaveProfile = (
                           title="Download"
                         >
                           <Download />
-                        </a>
+                        </a> : (
+                          <button type="button" disabled title="Video unavailable">
+                            <Download />
+                          </button>
+                        )}
 
                         <button
                           type="button"
+                          disabled={!project.videoUrl}
                           onClick={(e) =>
                             handleShare(
                               project,
@@ -1647,7 +1652,7 @@ const handleSaveProfile = (
             <History />
             <span>Previous Works</span>
             <span>
-              {projects.length || SAMPLE_PROJECTS_PRESET.length}
+              {projects.length}
             </span>
           </button>
 
@@ -1664,7 +1669,7 @@ const handleSaveProfile = (
             }}
           >
             <CreditCard />
-            <span>Credits</span>
+            <span>Demo credits</span>
             <span>
   {credits !== null ? credits : "..."}
 </span>
@@ -1742,6 +1747,11 @@ const handleSaveProfile = (
           }
         >
           <div
+            ref={cinemaDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Reel preview: ${activeCinemaReel.title}`}
+            tabIndex={-1}
             className="cinema-container"
             onClick={(e) =>
               e.stopPropagation()
@@ -1767,6 +1777,7 @@ const handleSaveProfile = (
 
               <button
                 type="button"
+                aria-label="Close reel preview"
                 onClick={() =>
                   setActiveCinemaReel(null)
                 }
@@ -1776,19 +1787,22 @@ const handleSaveProfile = (
             </div>
 
             <div className="cinema-video">
-              <video
-                src={
-                  activeCinemaReel.videoUrl
-                }
-                controls
-                autoPlay
-                loop
-                playsInline
-              />
+              {activeCinemaReel.videoUrl && !cinemaVideoUnavailable ? (
+                <video
+                  src={activeCinemaReel.videoUrl}
+                  controls
+                  autoPlay
+                  loop
+                  playsInline
+                  onError={() => setCinemaVideoUnavailable(true)}
+                />
+              ) : (
+                <p role="status">Video unavailable</p>
+              )}
             </div>
 
             <div className="cinema-actions">
-              <a
+              {activeCinemaReel.videoUrl && !cinemaVideoUnavailable ? <a
                 href={
                   activeCinemaReel.videoUrl
                 }
@@ -1800,7 +1814,7 @@ const handleSaveProfile = (
                 <Download />
 
                 DOWNLOAD MP4
-              </a>
+              </a> : <span role="status">Download unavailable</span>}
 
               <button
                 type="button"
@@ -1810,6 +1824,7 @@ const handleSaveProfile = (
                     e
                   )
                 }
+                disabled={!activeCinemaReel.videoUrl || cinemaVideoUnavailable}
                 className="cinema-share"
               >
                 {copiedId ===
@@ -1844,6 +1859,11 @@ const handleSaveProfile = (
           }
         >
           <div
+            ref={createReelDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-reel-dialog-title"
+            tabIndex={-1}
             className="dashboard-modal"
             onClick={(e) =>
               e.stopPropagation()
@@ -1857,7 +1877,7 @@ const handleSaveProfile = (
                 </div>
 
                 <div>
-                  <p>
+                  <p id="create-reel-dialog-title">
                     CREATE A NEW REEL
                   </p>
 
@@ -1870,6 +1890,7 @@ const handleSaveProfile = (
 
               <button
                 type="button"
+                aria-label="Close create reel dialog"
                 onClick={() =>
                   setNewReelModalOpen(false)
                 }
@@ -1901,7 +1922,7 @@ const handleSaveProfile = (
                       e.target.value
                     )
                   }
-                  placeholder="e.g. Banarasi Katan Silk Saree"
+                  placeholder="Enter a project name"
                 />
 
                 <span>
@@ -1918,10 +1939,12 @@ const handleSaveProfile = (
                 <div className="modal-category-grid">
                   {(
                     [
-                      "Sarees",
-                      "Lehengas",
-                      "Kurtis",
-                      "Bridal",
+                      "Product",
+                      "Apparel",
+                      "Accessories",
+                      "Beauty",
+                      "Home",
+                      "Other",
                     ] as const
                   ).map((cat) => (
                     <button
@@ -1971,6 +1994,47 @@ const handleSaveProfile = (
           </div>
         </div>
       )}
+      {pendingConfirmation && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+          <div
+            ref={confirmationDialogRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="dashboard-confirmation-title"
+            className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-2xl"
+          >
+            <h2
+              id="dashboard-confirmation-title"
+              className="text-lg font-semibold text-[var(--color-text-primary)]"
+            >
+              Please confirm
+            </h2>
+            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
+              {pendingConfirmation.message}
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setPendingConfirmation(null)}
+                className="rounded-md border border-[var(--color-border)] px-4 py-2 text-sm text-[var(--color-text-primary)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const confirmAction = pendingConfirmation.onConfirm;
+                  setPendingConfirmation(null);
+                  confirmAction();
+                }}
+                className="rounded-md bg-[var(--color-brand-primary)] px-4 py-2 text-sm font-medium text-white"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2014,6 +2078,11 @@ function DashfolioReelCard({
     useRef<HTMLVideoElement | null>(
       null
     );
+  const [videoUnavailable, setVideoUnavailable] = useState(false);
+
+  useEffect(() => {
+    setVideoUnavailable(false);
+  }, [project.videoUrl]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -2031,35 +2100,45 @@ function DashfolioReelCard({
 
   return (
     <article
-      onClick={onTogglePlay}
+      role="group"
+      tabIndex={0}
+      aria-label={`${project.title}. Press Enter or Space to play or pause the reel.`}
+      onClick={() => project.videoUrl && !videoUnavailable && onTogglePlay()}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || !project.videoUrl || videoUnavailable) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onTogglePlay();
+        }
+      }}
       className={`dashboard-reel-card ${
         isLight ? "light-card" : ""
       }`}
     >
       {/* VIDEO */}
       <div className="reel-media">
-        <img
-          src={project.thumbnailUrl}
-          alt={project.title}
-          className={
-            isPlaying
-              ? "poster hidden"
-              : "poster"
-          }
-        />
-
-        <video
-          ref={videoRef}
-          src={project.videoUrl}
-          loop
-          muted={isMuted}
-          playsInline
-          className={
-            isPlaying
-              ? "reel-video playing"
-              : "reel-video"
-          }
-        />
+        {project.videoUrl && !videoUnavailable ? (
+          <>
+            <img
+              src={project.thumbnailUrl}
+              alt={project.title}
+              className={isPlaying ? "poster hidden" : "poster"}
+            />
+            <video
+              ref={videoRef}
+              src={project.videoUrl}
+              onError={() => setVideoUnavailable(true)}
+              loop
+              muted={isMuted}
+              playsInline
+              className={isPlaying ? "reel-video playing" : "reel-video"}
+            />
+          </>
+        ) : (
+          <div className="reel-video-unavailable flex h-full w-full items-center justify-center bg-neutral-900 text-sm text-neutral-400" role="status">
+            Video unavailable
+          </div>
+        )}
 
         <div className="reel-gradient" />
 
@@ -2073,6 +2152,8 @@ function DashfolioReelCard({
             <button
               type="button"
               onClick={onShare}
+              disabled={!project.videoUrl || videoUnavailable}
+              aria-label={project.videoUrl && !videoUnavailable ? "Share reel" : "Reel video unavailable"}
               title={
                 isCopied
                   ? "Link copied"
@@ -2155,6 +2236,7 @@ function DashfolioReelCard({
           <button
             type="button"
             onClick={onTogglePlay}
+            disabled={!project.videoUrl || videoUnavailable}
             className={
               isPlaying ? "primary" : ""
             }
@@ -2195,21 +2277,22 @@ function DashfolioReelCard({
             </button>
           )}
 
-          <a
-            href={project.videoUrl}
-            download={`${project.title
-              .toLowerCase()
-              .replace(
-                /[^a-z0-9]+/g,
-                "_"
-              )}.mp4`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Download />
-
-            <span>Save</span>
-          </a>
+          {project.videoUrl && !videoUnavailable ? (
+            <a
+              href={project.videoUrl}
+              download={`${project.title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.mp4`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Download />
+              <span>Save</span>
+            </a>
+          ) : (
+            <button type="button" disabled title="Video unavailable">
+              <Download />
+              <span>Unavailable</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -2332,11 +2415,13 @@ function PreviousWorkCard({
 }
 function PreviousWorksPage({
   projects,
+  showSamplePreview,
   isLight,
   onOpenLibrary,
   onOpenCinema,
 }: {
   projects: ReelProject[];
+  showSamplePreview: boolean;
   isLight: boolean;
   onOpenLibrary: () => void;
   onOpenCinema: (project: ReelProject) => void;
@@ -2344,7 +2429,9 @@ function PreviousWorksPage({
   const works =
     projects.length > 0
       ? projects
-      : SAMPLE_PROJECTS_PRESET;
+      : showSamplePreview
+        ? SAMPLE_PROJECTS_PRESET
+        : [];
 
   return (
     <section className="previous-works-page">
@@ -2371,11 +2458,21 @@ function PreviousWorksPage({
 
       </div>
 
+      {showSamplePreview && projects.length === 0 && (
+        <p className="text-sm text-neutral-500" role="status">
+          Sample preview — these demo reels are not part of your projects.
+        </p>
+      )}
+
 
       {/* REEL CARDS */}
 
       <section className="reel-grid page-enter">
-
+        {works.length === 0 && (
+          <p className="col-span-full py-12 text-center text-neutral-500" role="status">
+            No reels yet. Create a reel to see it here.
+          </p>
+        )}
         {works.map((project) => (
 
           <DashfolioReelCard
@@ -2413,7 +2510,7 @@ function CreditsPage({
         <div>
           <span className="credits-eyebrow">ACCOUNT</span>
           <h1>Credits</h1>
-          <p>Manage your reel generation credits and subscription.</p>
+          <p>Demo balance shown; account-specific credits are not configured.</p>
         </div>
       </div>
       
@@ -2428,7 +2525,7 @@ function CreditsPage({
     </div>
 
     <span className="credits-current-plan">
-      CURRENT PLAN: FREE
+      DEMO BALANCE
     </span>
   </div>
 
@@ -2639,32 +2736,29 @@ function FabricCatalogsPage({
 }) {
   const catalogs = [
     {
-      name: "Sarees",
-      count: "24 Fabrics",
+      name: "Product catalog",
+      count: "All products",
       description:
-        "Silk, cotton, handloom and traditional saree fabrics.",
-      tags: ["Silk", "Cotton", "Handloom"],
+        "Browse and organize products for your next reel.",
+      tags: ["Catalog", "Products", "Collections"],
     },
     {
-      name: "Lehengas",
-      count: "18 Fabrics",
-      description:
-        "Premium fabrics for bridal and festive lehenga collections.",
-      tags: ["Velvet", "Silk", "Brocade"],
+      name: "Apparel",
+      count: "Product category",
+      description: "Browse reels tagged with apparel products.",
+      tags: ["Clothing", "Fashion", "Apparel"],
     },
     {
-      name: "Kurtis",
-      count: "16 Fabrics",
-      description:
-        "Comfortable and premium fabrics for everyday ethnic wear.",
-      tags: ["Cotton", "Rayon", "Linen"],
+      name: "Accessories",
+      count: "Product category",
+      description: "Browse reels tagged with accessories.",
+      tags: ["Bags", "Jewelry", "Accessories"],
     },
     {
-      name: "Bridal",
-      count: "21 Fabrics",
-      description:
-        "Luxury fabrics curated for bridal and wedding collections.",
-      tags: ["Zari", "Brocade", "Velvet"],
+      name: "Other",
+      count: "Product category",
+      description: "Browse reels tagged with other products.",
+      tags: ["Beauty", "Food", "Home"],
     },
   ];
 
@@ -2678,10 +2772,10 @@ function FabricCatalogsPage({
             PRODUCT LIBRARY
           </span>
 
-          <h1>Fabric Catalogs</h1>
+          <h1>Product Catalogs</h1>
 
           <p>
-            Browse your fabric collections and product materials.
+            Browse the product categories used in your reels.
           </p>
         </div>
 
@@ -2699,12 +2793,12 @@ function FabricCatalogsPage({
       <div className="fabric-summary">
         <div>
           <span className="fabric-summary-label">
-            CATALOG COLLECTIONS
+            YOUR LIBRARY
           </span>
 
-          <strong>79</strong>
+          <strong>Reels</strong>
 
-          <p>Total fabrics available</p>
+          <p>Filter your saved reel projects</p>
         </div>
 
         <div className="fabric-summary-line" />
@@ -2714,9 +2808,9 @@ function FabricCatalogsPage({
             CATEGORIES
           </span>
 
-          <strong>04</strong>
+          <strong>Product types</strong>
 
-          <p>Product categories</p>
+          <p>Choose a category below</p>
         </div>
       </div>
 
@@ -2724,10 +2818,10 @@ function FabricCatalogsPage({
       {/* CATALOGS */}
       <div className="fabric-section-heading">
         <div>
-          <h2>Collections</h2>
+          <h2>Product categories</h2>
 
           <p>
-            Select a catalog to explore its fabrics.
+            Select a category to filter the reel library.
           </p>
         </div>
       </div>
@@ -2748,7 +2842,7 @@ function FabricCatalogsPage({
               </div>
 
               <div className="fabric-card-category">
-                FABRIC
+                PRODUCT
               </div>
             </div>
 
@@ -2784,7 +2878,9 @@ function FabricCatalogsPage({
                 type="button"
                 className="fabric-view-button"
                 onClick={() => {
-  onSelectCategory(catalog.name);
+                  onSelectCategory(
+                    catalog.name === "Product catalog" ? "All" : catalog.name
+                  );
   onBackToLibrary();
 }}
               >
@@ -2804,11 +2900,10 @@ function FabricCatalogsPage({
         </div>
 
         <div>
-          <h3>Build your fabric library</h3>
+          <h3>Organize your product reels</h3>
 
           <p>
-            Organize your fabrics by category and use them
-            when creating your next reel.
+            Add product details while creating a reel to keep your library organized.
           </p>
         </div>
       </div>
@@ -2869,6 +2964,7 @@ function SettingsPage({
 
   const [editBrand, setEditBrand] =
     useState(displayBrand);
+  const editProfileDialogRef = useDialogFocus<HTMLDivElement>(editProfileOpen, () => setEditProfileOpen(false));
 
   const openEditProfile = () => {
     setEditName(displayName);
@@ -2881,7 +2977,7 @@ function SettingsPage({
       editName.trim() || "Creator";
 
     const brand =
-      editBrand.trim() || "Boutique Studio";
+      editBrand.trim() || "Your Studio";
 
     onSaveProfile(name, brand);
 
@@ -3213,6 +3309,11 @@ function SettingsPage({
         >
 
           <div
+            ref={editProfileDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-profile-dialog-title"
+            tabIndex={-1}
             className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-2xl"
             onClick={(event) =>
               event.stopPropagation()
@@ -3225,7 +3326,7 @@ function SettingsPage({
 
               <div>
 
-                <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
+                <h2 id="edit-profile-dialog-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
                   Edit Studio Profile
                 </h2>
 

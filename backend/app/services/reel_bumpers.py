@@ -1,7 +1,8 @@
 """Deterministic, FFmpeg-generated branded intro/outro bumpers - no
-AI-generated video. Every real generated Reel gets a 2s intro and 2s outro;
-this module only builds those two standalone clips. Concatenating them into
-the timeline (alongside product clips) is reel_editor_renderer's job.
+AI-generated video. Plans use 2s intro and outro bumpers when they fit the
+requested whole-file duration; shorter plans explicitly omit both. This
+module builds those standalone clips. Concatenating them into the timeline
+(alongside product clips) is reel_editor_renderer's job.
 
 Brand-agnostic by construction: brand_name/logo_path/text_color are always
 supplied by the caller (from app.services.brand_service's central config),

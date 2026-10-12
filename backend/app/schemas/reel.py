@@ -1,5 +1,7 @@
+import uuid
 
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from app.schemas.story import TransitionConfig
 
@@ -26,13 +28,13 @@ class ReelResult(BaseModel):
     planned_clips: list[PlannedClip]
     processing_time_seconds: float
     target_duration: float | None = None
-    duration_status: str = "ok"
+    duration_status: Literal["ok", "insufficient_content"] = "ok"
 
 
 class ReelGenerateResponse(BaseModel):
     # Public response intentionally excludes output_path.
-    reel_id: str
-    status: str
+    reel_id: uuid.UUID
+    status: Literal["completed"]
     download_url: str
     duration: float
     width: int
@@ -43,4 +45,4 @@ class ReelGenerateResponse(BaseModel):
     planned_clips: list[PlannedClip]
     processing_time_seconds: float
     target_duration: float | None = None
-    duration_status: str = "ok"
+    duration_status: Literal["ok", "insufficient_content"] = "ok"

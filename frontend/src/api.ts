@@ -1,5 +1,5 @@
 
-import axios from "axios";
+import axios, { isAxiosError } from "axios";
 import type {
   AnalysisSummary,
   MusicTrack,
@@ -16,6 +16,35 @@ const api = axios.create({
   baseURL: API_BASE,
   timeout: 30000,
 });
+
+const SENSITIVE_ERROR_DETAIL =
+  /(traceback|stack trace|authorization|bearer\s|password|secret|token|\bat\s+[^\s]+\s*\()/i;
+const FILESYSTEM_PATH = /(?:^|\s)(?:[A-Za-z]:\\|\\\\|\/)[^\s]*/;
+
+export function apiErrorMessage(
+  error: unknown,
+  fallback: string
+): string {
+  if (isAxiosError(error)) {
+    if (!error.response) {
+      return "Unable to connect to the server. Check your connection and try again.";
+    }
+
+    const detail = error.response.data?.detail;
+    if (
+      typeof detail === "string" &&
+      detail.length > 0 &&
+      detail.length <= 240 &&
+      !/[\r\n]/.test(detail) &&
+      !SENSITIVE_ERROR_DETAIL.test(detail) &&
+      !FILESYSTEM_PATH.test(detail)
+    ) {
+      return detail;
+    }
+  }
+
+  return fallback;
+}
 
 export async function uploadVideos(files: File[]): Promise<UploadResponse> {
   const form = new FormData();

@@ -383,12 +383,17 @@ class ReelPlan(BaseModel):
         gt=0.0,
         le=300.0,
         allow_inf_nan=False,
+        description=(
+            "Requested whole-file duration, including template, intro, "
+            "product content, outro, and the complete end card."
+        ),
     )
 
     estimated_duration: float = Field(
         ge=0.0,
         le=300.0,
         allow_inf_nan=False,
+        description="Estimated product-content duration only.",
     )
 
     duration_difference: float = Field(
@@ -398,7 +403,6 @@ class ReelPlan(BaseModel):
     )
 
     clips: list[PlannedReelClip] = Field(
-        min_length=1,
         max_length=100,
     )
 
@@ -443,6 +447,22 @@ class ReelPlan(BaseModel):
         ge=0.0,
         le=300.0,
         allow_inf_nan=False,
+        description="Estimated duration of the complete rendered file.",
+    )
+
+    template_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=30.0,
+        allow_inf_nan=False,
+        description="Duration of the selected template segment in the final file.",
+    )
+    end_card_seconds: float = Field(
+        default=5.0,
+        ge=5.0,
+        le=5.0,
+        allow_inf_nan=False,
+        description="The full product end-card duration; fixed at five seconds.",
     )
 
     music: MusicSelection | None = None

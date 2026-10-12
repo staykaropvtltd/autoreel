@@ -15,8 +15,12 @@ const THEME_STORAGE_KEY = "kaladhar_theme";
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(THEME_STORAGE_KEY);
-      if (stored === "light" || stored === "dark") return stored;
+      try {
+        const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+        if (stored === "light" || stored === "dark") return stored;
+      } catch {
+        // Storage can be blocked; the in-memory default remains usable.
+      }
     }
     return "dark"; // Default is dark
   });
@@ -26,7 +30,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.remove("light", "dark");
     root.classList.add(theme);
     root.setAttribute("data-theme", theme);
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Keep the selected theme active even when it cannot be persisted.
+    }
   }, [theme]);
 
   const setTheme = (newTheme: Theme) => {

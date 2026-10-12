@@ -4,7 +4,7 @@ import ClipCard from "./ClipCard";
 const DURATION_PRESETS = [15, 30, 45, 60];
 
 interface PlanPreview {
-  estimated_duration: number;
+  estimated_final_duration: number;
   clip_count: number;
 }
 
@@ -21,6 +21,8 @@ interface ReviewScreenProps {
   planLoading: boolean;
   onContinue: () => void;
   error: string | null;
+  onRetryPlan: () => void;
+  onDismissError: () => void;
 }
 
 function Stat({
@@ -56,9 +58,18 @@ export default function ReviewScreen({
   planLoading,
   onContinue,
   error,
+  onRetryPlan,
+  onDismissError,
 }: ReviewScreenProps) {
   return (
     <div className="max-w-5xl w-full mx-auto px-4 py-10 space-y-8">
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {planLoading
+          ? "Updating reel duration estimate."
+          : planPreview
+            ? `Reel plan ready: ${planPreview.estimated_final_duration.toFixed(1)} seconds across ${planPreview.clip_count} clips.`
+            : "Reel plan estimate is not available yet."}
+      </p>
       {/* HEADER */}
       <div className="text-center space-y-1">
         <h2 className="text-2xl font-semibold text-[var(--color-text-primary)]">
@@ -164,7 +175,7 @@ export default function ReviewScreen({
             <span className="text-[var(--color-text-primary)] font-medium">
               {planLoading
                 ? "…"
-                : `${(planPreview?.estimated_duration ?? 0).toFixed(1)}s`}
+                : `${(planPreview?.estimated_final_duration ?? 0).toFixed(1)}s`}
             </span>
           </span>
         </div>
@@ -215,9 +226,30 @@ export default function ReviewScreen({
 
       {/* ERROR */}
       {error && (
-        <p className="text-sm text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 rounded-md px-3 py-2">
-          {error}
-        </p>
+        <div
+          role="alert"
+          className="text-sm text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 rounded-md px-3 py-2 flex flex-wrap items-center justify-between gap-3"
+        >
+          <span>{error}</span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onRetryPlan}
+              disabled={planLoading}
+              className="font-medium underline disabled:opacity-50"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={onDismissError}
+              aria-label="Dismiss error"
+              className="font-medium underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
       )}
 
       {/* CONTINUE */}

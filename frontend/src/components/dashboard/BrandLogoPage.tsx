@@ -7,7 +7,7 @@ type LogoPlacement = "start" | "entire";
 interface BrandLogoPageProps {
   project: {
     title: string;
-    category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+    category: string;
   } | null;
 
   onBack: () => void;
@@ -148,14 +148,9 @@ export default function BrandLogoPage({
         logoPlacement
       );
 
-      const response = await axios.post(
+      await axios.post(
         `${API_BASE}/branding/logo`,
         formData
-      );
-
-      console.log(
-        "Brand logo uploaded successfully:",
-        response.data
       );
 
       /*

@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  apiErrorMessage,
   generateReel,
   getAnalysis,
   getDemoStatus,
@@ -48,6 +49,24 @@ import type {
   ReelResult,
 } from "../../types";
 import AudioWaveformCutter from "./AudioWaveformCutter";
+
+const formatInrPrice = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(
+    /^(?:(?:₹|rs\.?\s*)\s*)?((?:\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})*,\d{3}|\d+)(?:\.\d{1,2})?)$/i
+  );
+  if (!match) return null;
+
+  const amount = Number(match[1].replace(/,/g, ""));
+  if (!Number.isFinite(amount) || amount > Number.MAX_SAFE_INTEGER) return null;
+
+  return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+};
+
+const hasCurrencyPrefix = (value: string): boolean =>
+  /^(?:₹|rs\.?\s*)/i.test(value.trim());
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /*  Local curated Spotify-catalogue metadata                                   */
@@ -219,7 +238,7 @@ interface PhotoshootUploadsPageProps {
   onBackToLibrary: () => void;
   onOpenInEditor?: (projectData: {
     title: string;
-    category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+    category: string;
     slides?: any[];
     overlays?: any;
     audio?: any;
@@ -227,7 +246,7 @@ interface PhotoshootUploadsPageProps {
   onAddToLibrary?: (savedProject: {
     id: string;
     title: string;
-    category: "Sarees" | "Lehengas" | "Kurtis" | "Bridal";
+    category: string;
     durationSeconds: number;
     resolution: string;
     videoUrl: string;
@@ -274,13 +293,9 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
   }, [files]);
 
   /* ── Collection metadata ── */
-  const [collectionTitle, setCollectionTitle] = useState(
-    "Varanasi Zari Heritage Collection"
-  );
-  const [category, setCategory] = useState<
-    "Sarees" | "Lehengas" | "Kurtis" | "Bridal"
-  >("Sarees");
-  const [price, setPrice] = useState("16500");
+  const [collectionTitle, setCollectionTitle] = useState("");
+  const [category, setCategory] = useState("Product");
+  const [price, setPrice] = useState("");
   const [targetDuration, setTargetDuration] = useState<15 | 30 | 45>(15);
 
   /* ── Music catalogue from backend ── */
@@ -331,12 +346,12 @@ const handleBrandLogoUpload = async (
   ];
 
   if (!allowedTypes.includes(file.type)) {
-    alert("Please upload a JPG, PNG, or WEBP image.");
+    setError("Please upload a JPG, PNG, or WEBP image.");
     return;
   }
 
   if (file.size > 20 * 1024 * 1024) {
-    alert("Logo image must be smaller than 20 MB.");
+    setError("Logo image must be smaller than 20 MB.");
     return;
   }
 
@@ -361,27 +376,12 @@ const handleBrandLogoUpload = async (
     );
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-
-      throw new Error(
-        errorData?.detail || "Failed to upload brand logo."
-      );
+      throw new Error("Failed to upload brand logo. Please try again.");
     }
-
-    const data = await response.json();
-
-    console.log("Brand logo uploaded:", data);
-  } catch (error) {
-    console.error("Brand logo upload failed:", error);
-
+  } catch {
     setBrandLogo(null);
     setBrandLogoPreview(null);
-
-    alert(
-      error instanceof Error
-        ? error.message
-        : "Failed to upload brand logo."
-    );
+    setError("Failed to upload brand logo. Please try again.");
   } finally {
     setIsUploadingBrandLogo(false);
   }
@@ -397,9 +397,7 @@ const handleBrandLogoUpload = async (
   const [isSavedToLibrary, setIsSavedToLibrary] = useState(false);
   const refreshCredits = async () => {
   try {
-    const data = await getCredits();
-
-    console.log("Updated credits:", data.credits);
+    await getCredits();
 
     window.dispatchEvent(new Event("credits-updated"));
   } catch (error) {
@@ -449,7 +447,7 @@ const handleBrandLogoUpload = async (
       fitMode: "cover",
     }));
     onOpenInEditor?.({
-      title: collectionTitle || "Handloom Couture Reel",
+      title: collectionTitle || "Untitled Reel",
       category,
       slides: customSlides,
     });
@@ -777,9 +775,6 @@ setStepLabel("Select the clips you want to include in your reel.");
         `${clip.source_file}|${clip.original_start}|${clip.original_end}`
       )
     );
-    console.log("Selected clips:", selectedClips);
-console.log("Planned clips after filtering:", plannedClips);
-
     if (plannedClips.length === 0) {
   throw new Error(
     "None of the selected clips could be matched to the reel plan."
@@ -794,11 +789,11 @@ const finalClips = plannedClips;
       target_duration: targetDuration,
       product: {
         product_name: collectionTitle,
-        price: price ? `₹${price}` : "",
+        price: formatInrPrice(price) ?? "",
         category,
-        material: "Artisanal Weave",
-        color: "Traditional",
-        product_code: "KL-AUTOREEL",
+        material: "",
+        color: "",
+        product_code: "",
       },
       overlays: {
   ...initialPlan.overlays,
@@ -842,8 +837,6 @@ setGeneratedReelId(reelId);
 // Refresh credit balance after successful reel generation
 await refreshCredits();
 
-setIsGenerating(false);
-
     setTimeout(() => {
       const el = document.getElementById("ready-reel-section");
       if (el) {
@@ -853,22 +846,11 @@ setIsGenerating(false);
         });
       }
     }, 250);
-  } catch (err: any) {
-    console.error("Selected reel generation error:", err);
-
-    const detail = err.response?.data?.detail;
-
-    const message =
-      typeof detail === "string"
-        ? detail
-        : detail
-        ? JSON.stringify(detail)
-        : err.message;
-
+  } catch (err: unknown) {
     setError(
-      message || "Failed to generate reel. Please try again."
+      apiErrorMessage(err, "Failed to generate reel. Please try again.")
     );
-
+  } finally {
     setIsGenerating(false);
   }
 };
@@ -880,7 +862,7 @@ setIsGenerating(false);
     if (!generatedReelId || !generatedResult) return;
     onAddToLibrary?.({
       id: generatedReelId,
-      title: collectionTitle,
+      title: collectionTitle || "Untitled Reel",
       category,
       durationSeconds: Math.round(generatedResult.duration || targetDuration),
       resolution: "1080x1920 (9:16)",
@@ -889,7 +871,7 @@ setIsGenerating(false);
       createdAt: "Just now",
       viewsCount: "1",
       status: "ready",
-      productPrice: price ? `₹${Number(price).toLocaleString("en-IN")}` : "₹16,500",
+      productPrice: formatInrPrice(price) ?? "",
     });
     setIsSavedToLibrary(true);
   };
@@ -898,7 +880,7 @@ setIsGenerating(false);
     onOpenInEditor?.({
       title: collectionTitle,
       category,
-      overlays: { title: collectionTitle, price },
+      overlays: { title: collectionTitle, price: formatInrPrice(price) ?? "" },
     });
 
   /* ═══════════════════════════════════════════════ */
@@ -1000,7 +982,7 @@ setIsGenerating(false);
 
       {/* ─── ERROR BANNER ─── */}
       {error && (
-        <div className="p-4 mb-6 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center justify-between">
+        <div role="alert" className="p-4 mb-6 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center justify-between">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)}>
             <X className="w-4 h-4" />
@@ -1015,7 +997,7 @@ setIsGenerating(false);
           <h2 className="text-xl font-bold font-display text-[#faf7f2] mb-1">
             Generating Your Commercial Reel
           </h2>
-          <p className="text-sm text-[var(--db-muted)] mb-6">{stepLabel}</p>
+          <p role="status" aria-live="polite" aria-atomic="true" className="text-sm text-[var(--db-muted)] mb-6">{stepLabel}</p>
           <div className="w-full max-w-md bg-white/5 h-2 rounded-full overflow-hidden mb-6">
             <div
               className="bg-[#ff681b] h-full transition-all duration-500 rounded-full"
@@ -1044,6 +1026,9 @@ setIsGenerating(false);
       {/* ─── COMPLETED RESULT ─── */}
       {generatedResult && generatedReelId && !isGenerating && (
         <div id="ready-reel-section" className="p-8 mb-8 rounded-xl bg-[#111116] border border-emerald-500/30 shadow-2xl flex flex-col lg:flex-row gap-8 items-center">
+          <p className="sr-only" role="status" aria-live="polite">
+            Reel generation complete. Your reel is ready to preview or download.
+          </p>
           <div className="w-64 h-[440px] rounded-2xl overflow-hidden bg-black border-2 border-emerald-500/40 shadow-xl shrink-0">
             <video
               src={reelFileUrl(generatedReelId)}
@@ -1065,9 +1050,11 @@ setIsGenerating(false);
               <span className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-[#faf7f2]">
                 📐 1080×1920 (9:16)
               </span>
-              <span className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-[#ff681b]">
-                ₹{Number(price || 0).toLocaleString("en-IN")}
-              </span>
+              {formatInrPrice(price) && (
+                <span className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-[#ff681b]">
+                  {formatInrPrice(price)}
+                </span>
+              )}
               {selectedTrack && (
                 <span className="px-2.5 py-1 rounded bg-[#1DB954]/10 border border-[#1DB954]/30 text-[#1DB954]">
                   🎵 {selectedTrack.display_name || selectedTrack.filename}{" "}
@@ -1250,6 +1237,12 @@ setIsGenerating(false);
                     onChange={(e) => setCategory(e.target.value as any)}
                     className="w-full p-2.5 rounded-lg bg-black/50 border border-white/10 text-white text-sm outline-none cursor-pointer"
                   >
+                    <option value="Product">Product</option>
+                    <option value="Apparel">Apparel</option>
+                    <option value="Accessories">Accessories</option>
+                    <option value="Beauty">Beauty</option>
+                    <option value="Home">Home</option>
+                    <option value="Other">Other</option>
                     <option value="Sarees">Sarees</option>
                     <option value="Lehengas">Lehengas</option>
                     <option value="Kurtis">Kurtis</option>
@@ -1259,12 +1252,14 @@ setIsGenerating(false);
                 <div>
                   <label className="text-xs text-[var(--db-muted)] block mb-1">Price (₹)</label>
                   <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-[#ff681b] font-bold text-sm">₹</span>
+                    {!hasCurrencyPrefix(price) && (
+                      <span className="absolute left-3 top-2.5 text-[#ff681b] font-bold text-sm">₹</span>
+                    )}
                     <input
                       type="text"
                       value={price}
-                      onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ""))}
-                      placeholder="16500"
+                      onChange={(e) => setPrice(e.target.value)}
+                      placeholder="e.g. 1500"
                       className="w-full p-2.5 pl-7 rounded-lg bg-black/50 border border-white/10 text-white text-sm mono outline-none focus:border-[#ff681b]"
                     />
                   </div>
@@ -1467,6 +1462,8 @@ setIsGenerating(false);
       {analyzedClips.map((clip, index) => (
         <div
   key={`${clip.source_file}-${clip.start_time}-${index}`}
+  role="group"
+  aria-label={`Clip ${index + 1}: ${clip.source_file}`}
   onClick={() => toggleClipSelection(index)}
   className={`flex items-center justify-between gap-4 p-3 rounded-lg border cursor-pointer transition-all ${
   previewClipIndex === index
@@ -1493,7 +1490,14 @@ setIsGenerating(false);
     )}
   </button>
 
-  <div
+  <button
+    type="button"
+    aria-pressed={selectedClipIndexes.includes(index)}
+    aria-label={`${selectedClipIndexes.includes(index) ? "Deselect" : "Select"} clip ${index + 1}`}
+    onClick={(event) => {
+      event.stopPropagation();
+      toggleClipSelection(index);
+    }}
     className={`w-5 h-5 rounded border flex items-center justify-center ${
       selectedClipIndexes.includes(index)
         ? "bg-[#ff681b] border-[#ff681b]"
@@ -1503,7 +1507,7 @@ setIsGenerating(false);
     {selectedClipIndexes.includes(index) && (
       <span className="text-white text-xs font-bold">✓</span>
     )}
-  </div>
+  </button>
 </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -1670,9 +1674,17 @@ setIsGenerating(false);
                           key={meta.id}
                           className={`spotify-track-card ${isSelected ? "spotify-track-card-selected" : ""}`}
                           onClick={() => backendTrack && pickTrack(backendTrack)}
-                          role="button"
+                          role="group"
                           tabIndex={0}
-                          onKeyDown={(e) => e.key === "Enter" && backendTrack && pickTrack(backendTrack)}
+                          aria-keyshortcuts="Enter Space"
+                          aria-label={`Music track ${meta.displayName}${meta.artist ? ` by ${meta.artist}` : ""}. ${isSelected ? "Selected." : "Not selected."} Press Enter or Space to select.`}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget || !backendTrack) return;
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              pickTrack(backendTrack);
+                            }
+                          }}
                         >
                           {/* Album artwork */}
                           <div
@@ -2096,6 +2108,12 @@ setIsGenerating(false);
                     onChange={(e) => setCategory(e.target.value as any)}
                     className="w-full p-2.5 rounded-lg bg-black/50 border border-white/10 text-white text-sm outline-none cursor-pointer"
                   >
+                    <option value="Product">Product</option>
+                    <option value="Apparel">Apparel</option>
+                    <option value="Accessories">Accessories</option>
+                    <option value="Beauty">Beauty</option>
+                    <option value="Home">Home</option>
+                    <option value="Other">Other</option>
                     <option value="Sarees">Sarees</option>
                     <option value="Lehengas">Lehengas</option>
                     <option value="Kurtis">Kurtis</option>
@@ -2105,12 +2123,14 @@ setIsGenerating(false);
                 <div>
                   <label className="text-xs text-[var(--db-muted)] block mb-1">Price (₹)</label>
                   <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-[#ff681b] font-bold text-sm">₹</span>
+                    {!hasCurrencyPrefix(price) && (
+                      <span className="absolute left-3 top-2.5 text-[#ff681b] font-bold text-sm">₹</span>
+                    )}
                     <input
                       type="text"
                       value={price}
-                      onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ""))}
-                      placeholder="16500"
+                      onChange={(e) => setPrice(e.target.value)}
+                      placeholder="e.g. 1500"
                       className="w-full p-2.5 pl-7 rounded-lg bg-black/50 border border-white/10 text-white text-sm mono outline-none focus:border-[#ff681b]"
                     />
                   </div>

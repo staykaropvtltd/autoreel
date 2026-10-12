@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.schemas.story import BrandingConfig, ProductOverlayInfo
 from app.services.reel_composer import run_ffmpeg
+from app.services.reel_duration import END_CARD_DURATION_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ END_CARD_TEXT = "#3B2118"
 TEXT_COLOR = END_CARD_TEXT
 SECONDARY_TEXT = END_CARD_SECONDARY
 
-END_CARD_DURATION = 5.0
+END_CARD_DURATION = END_CARD_DURATION_SECONDS
 
 
 # =========================================================

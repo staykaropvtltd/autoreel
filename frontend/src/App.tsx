@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  apiErrorMessage,
   generateReel,
   getAnalysis,
   getDemoStatus,
@@ -137,6 +138,8 @@ export default function App() {
 
   const [planLoading, setPlanLoading] =
     useState(false);
+
+  const [planRetryCount, setPlanRetryCount] = useState(0);
 
   const [generationStage, setGenerationStage] =
     useState("preparing");
@@ -382,53 +385,63 @@ export default function App() {
      ========================================================= */
 
   useEffect(() => {
+    let cancelled = false;
+
     if (
       screen !== "review" ||
       !analysisJobId ||
       targetDuration <= 0
     ) {
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     const requestId =
       ++planRequestId.current;
 
     setPlanLoading(true);
+    setError(null);
+    setReelPlan(null);
 
-    planReel({
-      analysis_job_id:
-        analysisJobId,
+    const loadPlan = async () => {
+      try {
+        const plan = await planReel({
+          analysis_job_id: analysisJobId,
+          target_duration: targetDuration,
+        });
 
-      target_duration:
-        targetDuration,
-    })
-      .then((plan) => {
-        if (
-          planRequestId.current !==
-          requestId
-        ) {
-          return;
+        if (!cancelled && planRequestId.current === requestId) {
+          setReelPlan(plan);
         }
-
-        setReelPlan(plan);
-        setPlanLoading(false);
-      })
-      .catch(() => {
-        if (
-          planRequestId.current !==
-          requestId
-        ) {
-          return;
+      } catch (requestError) {
+        if (!cancelled && planRequestId.current === requestId) {
+          setError(
+            apiErrorMessage(
+              requestError,
+              "Could not create a reel plan. Please try again."
+            )
+          );
         }
+      } finally {
+        if (!cancelled && planRequestId.current === requestId) {
+          setPlanLoading(false);
+        }
+      }
+    };
 
-        setPlanLoading(false);
-      });
+    void loadPlan();
+
+    return () => {
+      cancelled = true;
+    };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     screen,
     analysisJobId,
     targetDuration,
+    planRetryCount,
   ]);
 
 
@@ -745,14 +758,9 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
 
   estimated_duration: estimatedDuration,
 
-  duration_difference:
-    estimatedDuration - reelPlan.target_duration,
-
   content_duration: estimatedDuration,
 
   transition_overlap_duration: 0,
-
-  estimated_final_duration: estimatedDuration,
 
   branding: {
     ...reelPlan.branding,
@@ -852,7 +860,7 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                 finalPlan
                   .product
                   .product_name ||
-                `Ethnic Reel #${
+                `Reel #${
                   existing.length +
                   1
                 }`,
@@ -861,7 +869,7 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                 (finalPlan
                   .product
                   .category as any) ||
-                "Sarees",
+                "Product",
 
               durationSeconds:
                 Math.round(
@@ -1048,7 +1056,7 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
 
               category:
                 category ||
-                "Sarees",
+                "Product",
             }));
           }
 
@@ -1198,6 +1206,8 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
               }
 
               error={error}
+
+              onError={setError}
             />
           )}
 
@@ -1258,8 +1268,8 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                 planPreview={
                   reelPlan
                     ? {
-                        estimated_duration:
-                          reelPlan.estimated_duration,
+                        estimated_final_duration:
+                          reelPlan.estimated_final_duration,
 
                         clip_count:
                           reelPlan
@@ -1278,6 +1288,12 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                 }
 
                 error={error}
+
+                onRetryPlan={() =>
+                  setPlanRetryCount((count) => count + 1)
+                }
+
+                onDismissError={() => setError(null)}
               />
             )}
 
@@ -1290,8 +1306,12 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
             reelPlan && (
               <PlanScreen
   targetDuration={reelPlan.target_duration}
+  estimatedFinalDuration={reelPlan.estimated_final_duration}
+  templateSeconds={reelPlan.template_seconds}
   introSeconds={reelPlan.intro_seconds}
   outroSeconds={reelPlan.outro_seconds}
+  endCardSeconds={reelPlan.end_card_seconds}
+  durationStatus={reelPlan.duration_status}
   clips={planClips}
   files={files}
   onRemove={removePlanClip}
@@ -1430,28 +1450,8 @@ function isProductEmpty(
 function axiosErrorMessage(
   err: unknown
 ): string {
-  if (
-    err &&
-    typeof err === "object" &&
-    "response" in err
-  ) {
-    const response =
-      (
-        err as {
-          response?: {
-            data?: {
-              detail?: string;
-            };
-          };
-        }
-      ).response;
-
-    if (
-      response?.data?.detail
-    ) {
-      return response.data.detail;
-    }
-  }
-
-  return "Something went wrong. Please check the backend is running and try again.";
+  return apiErrorMessage(
+    err,
+    "Something went wrong. Please check the backend is running and try again."
+  );
 }

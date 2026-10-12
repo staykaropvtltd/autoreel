@@ -16,6 +16,7 @@ interface UploadScreenProps {
   templateId?: string | null
 ) => void;
 error: string | null;
+onError: (message: string) => void;
 }
 
 const ACCEPTED_EXTENSIONS = [
@@ -53,6 +54,7 @@ export default function UploadScreen({
   demoAvailable,
   onAnalyze,
   error,
+  onError,
 }: UploadScreenProps) {
   const [dragOver, setDragOver] =
     useState(false);
@@ -115,12 +117,12 @@ const templateInputRef =
   ];
 
   if (!allowedTypes.includes(file.type)) {
-    alert("Please upload a JPG, PNG, or WEBP image.");
+    onError("Please upload a JPG, PNG, or WEBP image.");
     return;
   }
 
   if (file.size > 20 * 1024 * 1024) {
-    alert("Template image must be smaller than 20 MB.");
+    onError("Template image must be smaller than 20 MB.");
     return;
   }
 
@@ -155,26 +157,11 @@ const templateInputRef =
     const data = await response.json();
 
     setTemplateId(data.template_id);
-
-    console.log(
-      "Template uploaded:",
-      data.template_id
-    );
-  } catch (error) {
-    console.error(
-      "Template upload failed:",
-      error
-    );
-
+  } catch {
     setTemplateImage(null);
     setTemplatePreview(null);
     setTemplateId(null);
-
-    alert(
-      error instanceof Error
-        ? error.message
-        : "Failed to upload template image."
-    );
+    onError("Failed to upload template image. Please try again.");
   } finally {
     setTemplateUploading(false);
   }
@@ -550,7 +537,7 @@ const templateInputRef =
           ===================================================== */}
 
       {error && (
-        <p className="text-sm text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 rounded-md px-3 py-2">
+        <p role="alert" className="text-sm text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 rounded-md px-3 py-2">
           {error}
         </p>
       )}

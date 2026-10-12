@@ -32,7 +32,7 @@ Story structure (rolling by fraction of target duration filled so far):
   0-15%   START:  HERO > FULL_VIEW > PRODUCT_SHOWCASE
   15-35%  EARLY:  FULL_VIEW > HERO > PRODUCT_SHOWCASE
   35-80%  MIDDLE: MOVEMENT > DETAIL > SIDE_VIEW > PRODUCT_SHOWCASE
-  80-95%  LATE:   role-agnostic (strongest remaining wins)
+  80-95%  LATE:   FULL_VIEW > PRODUCT_SHOWCASE > HERO
   95-100% END:    ENDING > HERO > PRODUCT_SHOWCASE
 
 Trimming policy: a clip longer than the remaining budget (or configured
@@ -40,8 +40,8 @@ max) is trimmed from the END, keeping its original start (the beginning of
 a shot is usually its most intentional framing).
 """
 
-import time
 from dataclasses import dataclass
+import time
 
 from app.schemas.batch import BatchClip
 from app.schemas.reel import PlannedClip as ComposerPlannedClip
@@ -52,6 +52,7 @@ from app.schemas.story import (
     ShotRole,
     TransitionConfig,
 )
+from app.services.product_end_card import END_CARD_DURATION
 from app.services.shot_classifier import classify_clips
 from app.services.similarity_analyzer import hamming_distance
 
@@ -72,10 +73,9 @@ DEFAULT_MIN_QUALITY_SCORE = 50.0
 # Phase 9 (branding revision): every real generated Reel gets a branded
 # intro and outro bumper (see reel_bumpers.py) - reserved out of the user's
 # chosen TOTAL duration up front, not added on top of it. A 15s target with
-# a 2s intro and 2s outro leaves 11s for product content.
+# a 2s intro, 2s outro, and 5s end card leave 6s for product content.
 INTRO_DURATION_SECONDS = 2.0
 OUTRO_DURATION_SECONDS = 2.0
-MIN_CONTENT_DURATION_SECONDS = 3.0
 
 @dataclass
 class PlanningConfig:
@@ -83,6 +83,7 @@ class PlanningConfig:
     min_clip_duration: float = DEFAULT_MIN_CLIP_DURATION
     max_clip_duration: float = DEFAULT_MAX_CLIP_DURATION
     min_quality_score: float = DEFAULT_MIN_QUALITY_SCORE
+    template_duration: float = 0.0
 
 
 def _clip_key(clip: BatchClip) -> tuple[str, float]:
@@ -97,7 +98,7 @@ def _story_template(fraction_complete: float) -> list[ShotRole]:
     if fraction_complete < 0.80:
         return [ShotRole.MOVEMENT, ShotRole.DETAIL, ShotRole.SIDE_VIEW, ShotRole.PRODUCT_SHOWCASE]
     if fraction_complete < 0.95:
-        return []
+        return [ShotRole.FULL_VIEW, ShotRole.PRODUCT_SHOWCASE, ShotRole.HERO]
     return [ShotRole.ENDING, ShotRole.HERO, ShotRole.PRODUCT_SHOWCASE]
 
 
@@ -130,16 +131,26 @@ def plan_reel(candidates: list[BatchClip], config: PlanningConfig | None = None)
     config = config or PlanningConfig()
     start = time.perf_counter()
 
-    # Reserve the branded intro/outro out of the user's TOTAL target before
-    # selecting a single clip - the bumpers are part of the chosen duration,
-    # not extra time added on top of it (spec: "30 sec TOTAL = 2s intro + 26s
-    # content + 2s outro", not "2s intro + 30s content + 2s outro"). Bumpers
-    # are hard cuts (see reel_editor_renderer.compute_timeline_plan), so no
-    # crossfade overlap needs to be reserved back - target minus the two
-    # fixed bumper lengths is exactly the content budget.
+    # target_duration is the whole output budget. The five-second end card
+    # always remains complete. Keep both full bumpers when they fit; for
+    # shorter targets omit both explicitly so content and the end card fit.
+    fixed_without_bumpers = config.template_duration + END_CARD_DURATION
+    if fixed_without_bumpers > config.target_duration:
+        raise ValueError("Target duration cannot contain the template and full end card")
+    bumper_budget = config.target_duration - fixed_without_bumpers
+    if bumper_budget >= INTRO_DURATION_SECONDS + OUTRO_DURATION_SECONDS:
+        intro_seconds = INTRO_DURATION_SECONDS
+        outro_seconds = OUTRO_DURATION_SECONDS
+    else:
+        intro_seconds = 0.0
+        outro_seconds = 0.0
     content_target = max(
-        config.target_duration - INTRO_DURATION_SECONDS - OUTRO_DURATION_SECONDS,
-        MIN_CONTENT_DURATION_SECONDS,
+        config.target_duration
+        - config.template_duration
+        - intro_seconds
+        - outro_seconds
+        - END_CARD_DURATION,
+        0.0,
     )
     content_config = PlanningConfig(
         target_duration=content_target,
@@ -152,7 +163,10 @@ def plan_reel(candidates: list[BatchClip], config: PlanningConfig | None = None)
     # budget remains unfilled.
     eligible = [c for c in candidates if c.score >= content_config.min_quality_score]
     if not eligible and candidates:
-        eligible = sorted(candidates, key=lambda c: c.score, reverse=True)
+        eligible = list(candidates)
+    eligible.sort(
+        key=lambda c: (-c.score, c.source_file, c.start_time, c.end_time)
+    )
 
     classified_by_key = {_clip_key(c.clip): c for c in classify_clips(eligible)}
 
@@ -227,41 +241,35 @@ def plan_reel(candidates: list[BatchClip], config: PlanningConfig | None = None)
         remaining.remove(best_candidate)
         position += 1
 
-    if not selected and eligible:
-        top = eligible[0]
-        planned_dur = max(1.0, min(top.duration, content_config.target_duration))
-        classified_clip = classified_by_key.get(_clip_key(top))
-        shot_role = classified_clip.shot_role if classified_clip else ShotRole.DETAIL
-        role_conf = classified_clip.role_confidence if classified_clip else 0.5
-        selected.append(
-            PlannedReelClip(
-                position=1,
-                source_file=top.source_file,
-                original_start=top.start_time,
-                original_end=top.end_time,
-                planned_start=top.start_time,
-                planned_end=top.start_time + planned_dur,
-                planned_duration=round(planned_dur, 3),
-                score=top.score,
-                shot_role=shot_role,
-                role_confidence=role_conf,
-            )
-        )
-        accumulated_duration = planned_dur
-
     processing_time_seconds = round(time.perf_counter() - start, 3)
     estimated_duration = round(accumulated_duration, 3)
-    duration_summary = compute_duration_summary(selected)
+    duration_summary = compute_duration_summary(
+        selected,
+        target_duration=config.target_duration,
+        template_seconds=config.template_duration,
+        intro_seconds=intro_seconds,
+        outro_seconds=outro_seconds,
+        end_card_seconds=END_CARD_DURATION,
+    )
+    duration_status = (
+        "ok"
+        if selected and duration_summary["estimated_final_duration"]
+        >= config.target_duration - DURATION_TOLERANCE_SECONDS
+        else "insufficient_content"
+    )
 
     return ReelPlan(
         target_duration=config.target_duration,
         estimated_duration=estimated_duration,
-        duration_difference=round(estimated_duration - config.target_duration, 3),
+        duration_difference=round(duration_summary["estimated_final_duration"] - config.target_duration, 3),
         clips=selected,
         processing_time_seconds=processing_time_seconds,
         overlays=suggest_overlay_placement(selected),
-        intro_seconds=INTRO_DURATION_SECONDS,
-        outro_seconds=OUTRO_DURATION_SECONDS,
+        intro_seconds=intro_seconds,
+        outro_seconds=outro_seconds,
+        template_seconds=config.template_duration,
+        end_card_seconds=END_CARD_DURATION,
+        duration_status=duration_status,
         **duration_summary,
     )
 
@@ -280,21 +288,34 @@ def to_composer_planned_clips(reel_plan: ReelPlan) -> list[ComposerPlannedClip]:
     ]
 
 
-def compute_duration_summary(clips: list[PlannedReelClip]) -> dict[str, float]:
+def compute_duration_summary(
+    clips: list[PlannedReelClip],
+    *,
+    target_duration: float | None = None,
+    template_seconds: float = 0.0,
+    intro_seconds: float = 0.0,
+    outro_seconds: float = 0.0,
+    end_card_seconds: float = 0.0,
+) -> dict[str, float]:
     """Duration accounting. Every transition (fade, zoom, slide) is now a
     duration-preserving effect baked into the incoming clip's own footage
     during extraction (reel_composer.build_zoom_filter / build_fade_in_filter)
     - none of them overlap or shorten the combined timeline the way an
     xfade-based crossfade used to. transition_overlap_duration is kept at
-    0.0 (rather than removed) so existing callers/serialized plans that read
-    this field keep working; estimated_final_duration is therefore always
-    exactly content_duration.
+    0.0 so existing callers/serialized plans that read this field keep
+    working. When segment durations are supplied, estimated_final_duration
+    includes every rendered segment and is capped at target_duration.
     """
     content_duration = round(sum(c.planned_duration for c in clips), 3)
+    estimated_final_duration = (
+        content_duration + template_seconds + intro_seconds + outro_seconds + end_card_seconds
+    )
+    if target_duration is not None:
+        estimated_final_duration = min(estimated_final_duration, target_duration)
     return {
         "content_duration": content_duration,
         "transition_overlap_duration": 0.0,
-        "estimated_final_duration": content_duration,
+        "estimated_final_duration": round(estimated_final_duration, 3),
     }
 
 
@@ -345,18 +366,41 @@ def extend_plan_for_transitions(
     """
     # Bumpers (intro/outro) are reserved out of the total target and render
     # as their own separate, hard-cut segments - the CONTENT portion only
-    # needs to fill target_duration minus whatever was reserved for them
-    # (0 for a hand-built plan that never set these fields, so this is a
-    # no-op for every pre-existing caller).
-    effective_target = plan.target_duration - plan.intro_seconds - plan.outro_seconds
+    # needs to fill the total target after reserving the configured bumpers
+    # and product end card.
+    effective_target = max(
+        0.0,
+        plan.target_duration
+        - plan.template_seconds
+        - plan.intro_seconds
+        - plan.outro_seconds
+        - END_CARD_DURATION,
+    )
     config = config or PlanningConfig(target_duration=effective_target)
-    clips = [c.model_copy(deep=True) for c in plan.clips]
+    clips = sorted(
+        (c.model_copy(deep=True) for c in plan.clips),
+        key=lambda c: (
+            c.position,
+            c.source_file,
+            c.planned_start,
+            c.original_start,
+        ),
+    )
 
-    summary = compute_duration_summary(clips)
-    shortfall = round(effective_target - summary["estimated_final_duration"], 3)
+    summary = compute_duration_summary(
+        clips,
+        target_duration=plan.target_duration,
+        template_seconds=plan.template_seconds,
+        intro_seconds=plan.intro_seconds,
+        outro_seconds=plan.outro_seconds,
+        end_card_seconds=END_CARD_DURATION,
+    )
+    content_duration = sum(clip.planned_duration for clip in clips)
+    shortfall = round(effective_target - content_duration, 3)
 
     if shortfall <= DURATION_TOLERANCE_SECONDS:
-        return plan.model_copy(update={**summary, "clips": clips, "duration_status": "ok"})
+        status = "ok" if clips else "insufficient_content"
+        return plan.model_copy(update={**summary, "clips": clips, "duration_status": status})
 
     # Phase A: use each clip's own untapped slack, largest slack first.
     def _slack(c: PlannedReelClip) -> float:
@@ -383,8 +427,7 @@ def extend_plan_for_transitions(
                 for c in candidate_pool
                 if (c.source_file, c.start_time) not in used_keys and c.score >= config.min_quality_score
             ),
-            key=lambda c: c.score,
-            reverse=True,
+            key=lambda c: (-c.score, c.source_file, c.start_time, c.end_time),
         )
 
         next_position = max((c.position for c in clips), default=0) + 1
@@ -415,7 +458,14 @@ def extend_plan_for_transitions(
             next_position += 1
             shortfall = round(shortfall - planned_duration, 3)
 
-    final_summary = compute_duration_summary(clips)
+    final_summary = compute_duration_summary(
+        clips,
+        target_duration=plan.target_duration,
+        template_seconds=plan.template_seconds,
+        intro_seconds=plan.intro_seconds,
+        outro_seconds=plan.outro_seconds,
+        end_card_seconds=END_CARD_DURATION,
+    )
     status = "ok" if shortfall <= DURATION_TOLERANCE_SECONDS else "insufficient_content"
 
     return plan.model_copy(update={"clips": clips, **final_summary, "duration_status": status})

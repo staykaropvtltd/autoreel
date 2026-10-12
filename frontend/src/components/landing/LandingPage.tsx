@@ -120,30 +120,26 @@ export default function LandingPage({
                 Get In Touch
               </span>
               <h3 className={`text-xl sm:text-2xl font-bold tracking-tight ${isLight ? "text-neutral-950" : "text-white"}`}>
-                Contact Kaladhar Studio
+                Contact the ReelKaro team
               </h3>
               <p className={`text-xs ${isLight ? "text-neutral-600" : "text-neutral-400"}`}>
-                Turn your saree & ethnic wear catalog into viral social Reels.
+                Create product videos for the catalog you choose.
               </p>
             </div>
 
             <div className="space-y-2.5 pt-2 text-xs font-mono">
-              <a
-                href="https://wa.me/919876543210"
-                target="_blank"
-                rel="noreferrer"
+              <div
                 className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${
                   isLight
                     ? "bg-emerald-50/80 hover:bg-emerald-100/80 border-emerald-200 text-emerald-950"
                     : "bg-neutral-800/80 hover:bg-neutral-700/80 border-neutral-700 text-white"
                 }`}
               >
-                <span className={isLight ? "text-emerald-900 font-medium" : "text-neutral-300"}>WhatsApp Studio</span>
-                <span className={isLight ? "font-bold text-emerald-700" : "font-semibold underline"}>+91 (WhatsApp) →</span>
-              </a>
+                <span className={isLight ? "text-emerald-900 font-medium" : "text-neutral-300"}>WhatsApp</span>
+                <span className={isLight ? "font-bold text-emerald-700" : "font-semibold"}>Contact not configured</span>
+              </div>
 
-              <a
-                href="mailto:contact@staykaro.org"
+              <div
                 className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${
                   isLight
                     ? "bg-amber-50/80 hover:bg-amber-100/80 border-amber-200 text-amber-950"
@@ -151,8 +147,8 @@ export default function LandingPage({
                 }`}
               >
                 <span className={isLight ? "text-amber-900 font-medium" : "text-neutral-300"}>Email Support</span>
-                <span className={isLight ? "font-bold text-amber-700" : "font-medium underline"}>contact@staykaro.org</span>
-              </a>
+                <span className={isLight ? "font-bold text-amber-700" : "font-medium"}>Contact not configured</span>
+              </div>
 
               <div
                 className={`flex items-center justify-between p-3 rounded-xl border ${
@@ -162,7 +158,7 @@ export default function LandingPage({
                 }`}
               >
                 <span className={isLight ? "text-neutral-700 font-medium" : "text-neutral-300"}>Location</span>
-                <span className={isLight ? "text-neutral-600" : "text-neutral-400"}>Hyderabad, India</span>
+                <span className={isLight ? "text-neutral-600" : "text-neutral-400"}>Not configured</span>
               </div>
             </div>
 

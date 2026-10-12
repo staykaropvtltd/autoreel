@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Mail, Lock, User as UserIcon, Building2, Eye, EyeOff, X, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -54,6 +55,7 @@ export default function AuthModal({
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -117,6 +119,11 @@ export default function AuthModal({
 
         {/* Modal Dialog */}
         <motion.div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="auth-modal-title"
+          tabIndex={-1}
           initial={{ opacity: 0, scale: 0.94, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.94, y: 15 }}
@@ -151,7 +158,7 @@ export default function AuthModal({
                 <CheckCircle2 className="w-10 h-10" />
               </div>
               <div className="space-y-1">
-                <h3 className="font-serif text-2xl font-bold">
+                <h3 id="auth-modal-title" className="font-serif text-2xl font-bold">
                   {mode === "signin" ? "Welcome Back!" : "Account Created!"}
                 </h3>
                 <p className={`text-xs ${isLight ? "text-neutral-600" : "text-neutral-400"}`}>
@@ -172,7 +179,7 @@ export default function AuthModal({
                 >
                   Kaladhar Studio Access
                 </div>
-                <h3 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
+                <h3 id="auth-modal-title" className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
                   {mode === "signin" ? "Sign In to Your Studio" : "Create Creator Account"}
                 </h3>
                 <p className={`text-xs font-sans ${isLight ? "text-neutral-600" : "text-neutral-400"}`}>
@@ -259,6 +266,7 @@ export default function AuthModal({
               {/* Error Banner */}
               {error && (
                 <div
+                  role="alert"
                   className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
                     isLight
                       ? "bg-red-50 border border-red-200 text-red-700"
@@ -276,6 +284,7 @@ export default function AuthModal({
                 {mode === "signup" && (
                   <div className="space-y-1">
                     <label
+                      htmlFor="auth-full-name"
                       className={`text-[11px] font-mono uppercase tracking-wider block font-bold ${
                         isLight ? "text-neutral-700" : "text-neutral-300"
                       }`}
@@ -289,6 +298,7 @@ export default function AuthModal({
                         }`}
                       />
                       <input
+                        id="auth-full-name"
                         type="text"
                         required
                         value={name}
@@ -308,6 +318,7 @@ export default function AuthModal({
                 {mode === "signup" && (
                   <div className="space-y-1">
                     <label
+                      htmlFor="auth-brand-name"
                       className={`text-[11px] font-mono uppercase tracking-wider block font-bold ${
                         isLight ? "text-neutral-700" : "text-neutral-300"
                       }`}
@@ -321,6 +332,7 @@ export default function AuthModal({
                         }`}
                       />
                       <input
+                        id="auth-brand-name"
                         type="text"
                         value={brandName}
                         onChange={(e) => setBrandName(e.target.value)}
@@ -338,6 +350,7 @@ export default function AuthModal({
                 {/* Email field */}
                 <div className="space-y-1">
                   <label
+                    htmlFor="auth-email"
                     className={`text-[11px] font-mono uppercase tracking-wider block font-bold ${
                       isLight ? "text-neutral-700" : "text-neutral-300"
                     }`}
@@ -351,6 +364,8 @@ export default function AuthModal({
                       }`}
                     />
                     <input
+                    id="auth-email"
+                    autoComplete="email"
                       type="email"
                       required
                       value={email}
@@ -368,6 +383,7 @@ export default function AuthModal({
                 {/* Password field */}
                 <div className="space-y-1">
                   <label
+                    htmlFor="auth-password"
                     className={`text-[11px] font-mono uppercase tracking-wider block font-bold ${
                       isLight ? "text-neutral-700" : "text-neutral-300"
                     }`}
@@ -381,6 +397,8 @@ export default function AuthModal({
                       }`}
                     />
                     <input
+                    id="auth-password"
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
                       type={showPassword ? "text" : "password"}
                       required
                       value={password}

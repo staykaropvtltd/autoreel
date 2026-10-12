@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from app.services.product_end_card import (
+    END_CARD_DURATION,
     build_product_end_card_video,
     create_product_end_card,
 )
+from app.services.reel_duration import TEMPLATE_DURATION_SECONDS
 
 from app.schemas.reel import PlannedClip, ReelResult
 from app.schemas.story import (
@@ -74,8 +76,6 @@ SAFE_MARGIN_TOP = 140
 SAFE_MARGIN_BOTTOM = 220
 SAFE_MARGIN_SIDES = 60
 LINE_HEIGHT = 56
-END_CARD_DURATION = 5.0
-
 # accent_color only applies to "price" (a small highlight, per spec section
 # 11) - every other role uses the configured text_color.
 _ACCENT_ROLES = {"price"}
@@ -118,6 +118,39 @@ def compute_timeline_plan(planned_clips: list[PlannedClip]) -> TimelinePlan:
         combined += clip.duration
 
     return TimelinePlan(offsets=offsets, junctions=[], total_duration=round(combined, 3))
+
+
+def _fit_clip_paths_to_budget(
+    clip_paths: list[Path],
+    clip_durations: list[float],
+    duration_budget: float,
+    work_dir: Path,
+    fps: int,
+) -> list[Path]:
+    """Keep source content within its share of the total final duration."""
+    remaining = max(0.0, duration_budget)
+    fitted: list[Path] = []
+    for index, (clip_path, duration) in enumerate(zip(clip_paths, clip_durations)):
+        if remaining <= 0.01:
+            break
+        if duration <= remaining + 0.01:
+            fitted.append(clip_path)
+            remaining -= duration
+            continue
+
+        trimmed_path = work_dir / f"content_budget_{index:03d}.mp4"
+        run_ffmpeg(
+            [
+                "-y", "-i", str(clip_path), "-t", f"{remaining:.3f}",
+                "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+                "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-ar", "44100", "-ac", "2", "-b:a", "128k",
+                "-movflags", "+faststart", str(trimmed_path),
+            ]
+        )
+        fitted.append(trimmed_path)
+        break
+    return fitted
 
 
 def _stack_lines(lines: list[tuple[str, str]], start: float, end: float, anchor: str) -> list[dict]:
@@ -593,6 +626,16 @@ def compose_reel_from_editor_plan(
     """
     if not reel_plan.clips:
         raise EmptySelectionError("Cannot compose a Reel from an empty clip plan")
+    planned_fixed_duration = (
+        reel_plan.template_seconds
+        + reel_plan.intro_seconds
+        + reel_plan.outro_seconds
+        + END_CARD_DURATION
+    )
+    if planned_fixed_duration > reel_plan.target_duration + (1.0 / fps):
+        raise ValueError(
+            "Target duration cannot contain the full template, bumpers, and end card"
+        )
 
     # The rendered identity always comes from the central brand config
     # (assets/branding/brand.json), never from whatever a client happened to
@@ -606,10 +649,7 @@ def compose_reel_from_editor_plan(
         update={
             "branding": reel_plan.branding.model_copy(
                 update={
-                    "brand_name": (
-    reel_plan.branding.brand_name
-    or brand_config.name
-),
+                    "brand_name": brand_config.name,
                     "logo_path": str(brand_logo_path) if brand_logo_path else None,
                 }
             )
@@ -691,8 +731,10 @@ def compose_reel_from_editor_plan(
         # (as used throughout the existing test suite) renders exactly as it
         # did before this feature existed.
         intro_actual = 0.0
-        render_clip_paths = list(clip_paths)
-        render_measured_clips = list(measured_clips)
+        outro_actual = 0.0
+        template_intro_path: Path | None = None
+        intro_path: Path | None = None
+        outro_path: Path | None = None
                 # ---------------------------------------------------------------
         # TEMPLATE INTRO
         # ---------------------------------------------------------------
@@ -723,7 +765,7 @@ def compose_reel_from_editor_plan(
                         "-i",
                         "anullsrc=channel_layout=stereo:sample_rate=44100",
                         "-t",
-                        "0.5",
+                        f"{TEMPLATE_DURATION_SECONDS:.3f}",
                         "-vf",
                         (
                             f"scale={target_width}:{target_height}:"
@@ -749,7 +791,7 @@ def compose_reel_from_editor_plan(
                         "-b:a",
                         "128k",
                         "-t",
-                        "0.5",
+                        f"{TEMPLATE_DURATION_SECONDS:.3f}",
                         str(template_intro_path),
                     ]
                 )
@@ -758,34 +800,10 @@ def compose_reel_from_editor_plan(
                     template_intro_path
                 ).duration
 
-                template_clip = PlannedClip(
-                    source_file="__template_intro__",
-                    start_time=0.0,
-                    end_time=template_actual,
-                    duration=template_actual,
-                    score=100,
-                    transition_in=_NO_TRANSITION,
-                )
-
-                render_clip_paths = (
-                    [template_intro_path] + render_clip_paths
-                )
-
-                render_measured_clips = (
-                    [template_clip] + render_measured_clips
-                )
                 has_template = True
                 
         
 
-        render_timeline = compute_timeline_plan(render_measured_clips)
-
-        render_duration = min(
-            reel_plan.target_duration,
-            render_timeline.total_duration,
-        )
-
-        final_render_duration = render_duration + END_CARD_DURATION
                 # ---------------------------------------------------------------
         # BRAND INTRO BUMPER
         # ---------------------------------------------------------------
@@ -798,7 +816,7 @@ def compose_reel_from_editor_plan(
 
         logo_placement = get_logo_placement()
 
-        if logo_placement == "start":
+        if reel_plan.intro_seconds > 0:
             bumper_logo_path = (
                 Path(reel_plan.branding.logo_path)
                 if (
@@ -817,7 +835,7 @@ def compose_reel_from_editor_plan(
                 target_width,
                 target_height,
                 fps,
-                duration=2.0,
+                duration=reel_plan.intro_seconds,
                 fade_in=True,
                 fade_out=False,
                 text_color=brand_config.primary_color,
@@ -827,40 +845,84 @@ def compose_reel_from_editor_plan(
                 intro_path
             ).duration
 
-            intro_clip = PlannedClip(
-                source_file="__bumper_intro__",
-                start_time=0.0,
-                end_time=intro_actual,
-                duration=intro_actual,
-                score=100,
-                transition_in=_NO_TRANSITION,
+        if reel_plan.outro_seconds > 0:
+            bumper_logo_path = (
+                Path(reel_plan.branding.logo_path)
+                if reel_plan.branding.logo_path and Path(reel_plan.branding.logo_path).exists()
+                else None
             )
-
-            # Template first → bumper second → actual reel
-            insert_idx = 1 if has_template else 0
-            render_clip_paths = (
-                render_clip_paths[:insert_idx]
-                + [intro_path]
-                + render_clip_paths[insert_idx:]
+            outro_path = tmp_dir / "bumper_outro.mp4"
+            build_bumper_clip(
+                outro_path,
+                reel_plan.branding.brand_name,
+                bumper_logo_path,
+                target_width,
+                target_height,
+                fps,
+                duration=reel_plan.outro_seconds,
+                fade_in=False,
+                fade_out=True,
+                text_color=brand_config.primary_color,
             )
+            outro_actual = get_video_metadata(outro_path).duration
 
-            render_measured_clips = (
-                render_measured_clips[:insert_idx]
-                + [intro_clip]
-                + render_measured_clips[insert_idx:]
+        # target_duration covers the complete final file, including the
+        # template, configured bumpers, and product end card.
+        end_card_duration = END_CARD_DURATION
+        fixed_segment_duration = (
+            template_actual + intro_actual + outro_actual + end_card_duration
+        )
+        if fixed_segment_duration > reel_plan.target_duration + (1.0 / fps):
+            raise ValueError(
+                "Target duration cannot contain the full template, bumpers, and end card"
             )
-            render_timeline = compute_timeline_plan(render_measured_clips)
+        content_budget = max(
+            0.0,
+            reel_plan.target_duration
+            - fixed_segment_duration,
+        )
+        fitted_clip_paths = _fit_clip_paths_to_budget(
+            clip_paths,
+            [clip.duration for clip in measured_clips],
+            content_budget,
+            tmp_dir,
+            fps,
+        )
 
-            
-            
-
-        # Phase 9 critical invariant (section 29): video duration = music
-        # duration = target duration. If the actual video content falls short
-        # of the target (insufficient footage even after compensation), audio
-        # must be capped to match it - never let looped/extended music run
-        # past where the video ends.
-        render_duration = min(reel_plan.target_duration, render_timeline.total_duration)
-        final_render_duration = render_duration + END_CARD_DURATION
+        render_clip_paths = []
+        render_measured_clips = []
+        if has_template and template_intro_path is not None:
+            render_clip_paths.append(template_intro_path)
+            render_measured_clips.append(PlannedClip(
+                source_file="__template_intro__", start_time=0.0,
+                end_time=template_actual, duration=template_actual,
+                score=100, transition_in=_NO_TRANSITION,
+            ))
+        if intro_path is not None:
+            render_clip_paths.append(intro_path)
+            render_measured_clips.append(PlannedClip(
+                source_file="__bumper_intro__", start_time=0.0,
+                end_time=intro_actual, duration=intro_actual,
+                score=100, transition_in=_NO_TRANSITION,
+            ))
+        render_clip_paths.extend(fitted_clip_paths)
+        render_measured_clips.extend(
+            clip.model_copy(
+                update={"duration": get_video_metadata(path).duration}
+            )
+            for clip, path in zip(measured_clips, fitted_clip_paths)
+        )
+        if outro_path is not None:
+            render_clip_paths.append(outro_path)
+            render_measured_clips.append(PlannedClip(
+                source_file="__bumper_outro__", start_time=0.0,
+                end_time=outro_actual, duration=outro_actual,
+                score=100, transition_in=_NO_TRANSITION,
+            ))
+        render_timeline = compute_timeline_plan(render_measured_clips)
+        # This is the assembled length, so the -t bound cannot truncate the
+        # final end card. Content was already fitted to the remaining budget.
+        final_render_duration = render_timeline.total_duration + end_card_duration
 
         # Configured font_family takes priority, but a missing/invalid path
         # must never crash the render - fall back to a bundled system font.
@@ -978,7 +1040,9 @@ def compose_reel_from_editor_plan(
         # continues without a logo.
 
         intermediate_path = tmp_dir / "concatenated.mp4"
-        if len(render_clip_paths) == 1:
+        if not render_clip_paths:
+            intermediate_path = None
+        elif len(render_clip_paths) == 1:
             intermediate_path = render_clip_paths[0]
         else:
             # Plain hard-cut concatenation (hard cut, no re-encode - safe
@@ -1013,21 +1077,22 @@ def compose_reel_from_editor_plan(
         build_product_end_card_video(
             image_path=end_card_image,
             output_path=end_card_video,
-            duration=END_CARD_DURATION,
+            duration=end_card_duration,
             width=target_width,
             height=target_height,
             fps=fps,
         )
 
-        reel_with_end_card = tmp_dir / "reel_with_end_card.mp4"
-
-        concatenate_clips(
-            [intermediate_path, end_card_video],
-            reel_with_end_card,
-            tmp_dir,
-        )
-
-        intermediate_path = reel_with_end_card
+        if intermediate_path is None:
+            intermediate_path = end_card_video
+        else:
+            reel_with_end_card = tmp_dir / "reel_with_end_card.mp4"
+            concatenate_clips(
+                [intermediate_path, end_card_video],
+                reel_with_end_card,
+                tmp_dir,
+            )
+            intermediate_path = reel_with_end_card
 
         music_selection = reel_plan.music
         music_file_path = None
@@ -1075,9 +1140,13 @@ def compose_reel_from_editor_plan(
     # Phase 9 critical invariant: final_duration ≈ target_duration. Measured
     # via ffprobe (output_metadata.duration), not assumed from the plan -
     # this is the ground truth the user actually receives.
-    target_duration = reel_plan.target_duration + END_CARD_DURATION
+    target_duration = reel_plan.target_duration
     tolerance = max(0.5, target_duration * 0.05)
-    duration_status = "ok" if abs(output_metadata.duration - target_duration) <= tolerance else "insufficient_content"
+    duration_status = (
+        "ok"
+        if fitted_clip_paths and abs(output_metadata.duration - target_duration) <= tolerance
+        else "insufficient_content"
+    )
 
     return ReelResult(
         output_path=str(output_path),

@@ -246,7 +246,7 @@ def test_compose_reel_from_editor_plan_missing_logo_degrades_gracefully(tmp_path
 
     clip = _story_clip(1, synthetic_video_with_audio.name, 1.0)
     plan = ReelPlan(
-        target_duration=1.0, estimated_duration=1.0, duration_difference=0.0, clips=[clip],
+        target_duration=6.0, estimated_duration=1.0, duration_difference=0.0, clips=[clip],
         processing_time_seconds=0.0,
         branding=BrandingConfig(logo_path="C:/does/not/exist/logo.png", show_logo_at_start=True),
     )
@@ -256,6 +256,31 @@ def test_compose_reel_from_editor_plan_missing_logo_degrades_gracefully(tmp_path
     assert result.width == 1080
     assert result.height == 1920
     assert Path(result.output_path).exists()
+    assert result.duration == pytest.approx(6.0, abs=0.3)
+
+
+def test_renderer_rejects_target_that_would_truncate_the_full_end_card(
+    tmp_path: Path, synthetic_video_with_audio: Path
+):
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    (source_dir / synthetic_video_with_audio.name).write_bytes(synthetic_video_with_audio.read_bytes())
+    clip = _story_clip(1, synthetic_video_with_audio.name, 1.0)
+    plan = ReelPlan(
+        target_duration=4.0,
+        estimated_duration=1.0,
+        duration_difference=0.0,
+        clips=[clip],
+        processing_time_seconds=0.0,
+    )
+
+    with pytest.raises(ValueError, match="cannot contain"):
+        compose_reel_from_editor_plan(
+            plan,
+            source_dir=source_dir,
+            output_path=tmp_path / "out.mp4",
+        )
+    assert not (tmp_path / "out.mp4").exists()
 
 
 def test_compose_reel_from_editor_plan_two_clips_with_fade_end_to_end(
@@ -272,7 +297,7 @@ def test_compose_reel_from_editor_plan_two_clips_with_fade_end_to_end(
     clip2.transition_in = TransitionConfig(type=TransitionType.FADE, duration=0.3)
 
     plan = ReelPlan(
-        target_duration=2.0, estimated_duration=2.0, duration_difference=0.0, clips=[clip1, clip2],
+        target_duration=7.0, estimated_duration=2.0, duration_difference=0.0, clips=[clip1, clip2],
         processing_time_seconds=0.0,
         overlays=OverlayConfig(
             brand_placement="none", material_placement="beginning", price_placement="end",
@@ -287,9 +312,9 @@ def test_compose_reel_from_editor_plan_two_clips_with_fade_end_to_end(
     assert result.height == 1920
     assert result.video_codec == "h264"
     assert result.audio_codec == "aac"
-    # Fade is now a duration-preserving effect baked into clip 2's own
-    # footage, not a crossfade - no overlap, so 1.0 + 1.0 = 2.0s exactly.
-    assert result.duration == pytest.approx(2.0, abs=0.2)
+    # Two seconds of source content plus the five-second end card fills the
+    # seven-second total target; the fade does not consume timeline duration.
+    assert result.duration == pytest.approx(7.0, abs=0.2)
 
 
 # --- Phase 9: critical duration fix - transitions must not shrink the Reel ---
@@ -322,12 +347,12 @@ def _sliced_clips(source_file: str, n_clips: int, per_clip: float, transitions: 
 @pytest.mark.parametrize(
     "target_duration,transitions",
     [
-        (5.0, []),
+        (8.0, []),
         (10.0, [("fade", 2.0)]),
         (15.0, [("zoom_in", 1.0), ("fade", 1.0)]),
         (30.0, [("fade", 2.0), ("zoom_in", 1.5), ("slide_left", 1.0)]),
     ],
-    ids=["5s_no_transitions", "10s_fade2s", "15s_multi_transitions", "30s_multi_transitions"],
+    ids=["8s_no_transitions", "10s_fade2s", "15s_multi_transitions", "30s_multi_transitions"],
 )
 def test_final_duration_matches_target_with_transitions(
     tmp_path: Path, synthetic_long_video: Path, target_duration: float, transitions: list
@@ -338,9 +363,8 @@ def test_final_duration_matches_target_with_transitions(
     source_dir.mkdir()
     (source_dir / synthetic_long_video.name).write_bytes(synthetic_long_video.read_bytes())
 
-    overlap = sum(d for t, d in transitions if t in ("fade", "slide_left", "slide_right"))
     n_clips = max(len(transitions) + 1, 2)
-    per_clip = (target_duration + overlap) / n_clips
+    per_clip = (target_duration - 5.0) / n_clips
 
     clips = _sliced_clips(synthetic_long_video.name, n_clips, per_clip, transitions)
     plan = ReelPlan(
@@ -361,10 +385,8 @@ def test_final_duration_matches_target_with_transitions(
 
 
 def test_final_duration_does_not_shrink_below_target_bug_regression(tmp_path: Path, synthetic_long_video: Path):
-    """The exact Phase 9 bug report: clip durations 5s+5s with a 2s fade
-    must render ~10s (the target), not 8s (content - overlap) - given the
-    detected scenes actually have slack to extend into (as a real plan_reel
-    output would, since clips are trimmed from longer detected scenes).
+    """Two five-second clips with a 2s in-place fade plus the end card
+    should render to the fifteen-second total target without overlap loss.
     """
     from app.services.reel_planner import extend_plan_for_transitions
 
@@ -384,17 +406,17 @@ def test_final_duration_does_not_shrink_below_target_bug_regression(tmp_path: Pa
         transition_in=TransitionConfig(type=TransitionType.FADE, duration=2.0),
     )
     plan = ReelPlan(
-        target_duration=10.0, estimated_duration=10.0, duration_difference=0.0,
+        target_duration=15.0, estimated_duration=10.0, duration_difference=0.0,
         clips=[clip1, clip2], processing_time_seconds=0.0,
     )
 
     compensated = extend_plan_for_transitions(plan, candidate_pool=None)
-    assert compensated.duration_status == "ok"  # slack alone should cover the 2s shortfall
+    assert compensated.duration_status == "ok"
 
     result = compose_reel_from_editor_plan(compensated, source_dir=source_dir, output_path=tmp_path / "out.mp4")
 
-    assert result.duration == pytest.approx(10.0, abs=0.6)
-    assert result.duration > 9.0  # sanity: not the old, buggy 8.0s
+    assert result.duration == pytest.approx(15.0, abs=0.6)
+    assert result.duration > 14.0  # sanity: not the old, buggy short render
     assert result.duration_status == "ok"
 
 
@@ -495,7 +517,7 @@ def test_transitions_are_duration_preserving_not_xfade_overlap_regression(
     incoming clip's own footage (duration-preserving) and clips are
     concatenated with plain hard cuts, so this class of bug is structurally
     impossible: the rendered video must land within a small encoder
-    tolerance of exactly 2.0 + 6.0 + 1.7 + 1.1 + 3.0 + 2.0 = 15.8s.
+    tolerance of 2.0s intro + 6.8s content + 2.0s outro + 5.0s end card.
     """
     from app.services.reel_planner import extend_plan_for_transitions
     from app.services.video_metadata import get_video_stream_duration
@@ -504,7 +526,7 @@ def test_transitions_are_duration_preserving_not_xfade_overlap_regression(
     source_dir.mkdir()
     (source_dir / synthetic_long_video.name).write_bytes(synthetic_long_video.read_bytes())
 
-    durations = [6.0, 1.7, 1.1, 3.0]
+    durations = [3.0, 1.0, 0.8, 2.0]
     transitions = [None, TransitionConfig(type=TransitionType.ZOOM_IN, duration=2.0),
                    TransitionConfig(type=TransitionType.FADE, duration=1.0), None]
     roles = [ShotRole.HERO, ShotRole.DETAIL, ShotRole.MOVEMENT, ShotRole.ENDING]
@@ -561,16 +583,16 @@ def test_compose_reel_with_bumpers_total_duration_matches_target(tmp_path: Path,
 
     clip1 = PlannedReelClip(
         position=1, source_file=synthetic_long_video.name, original_start=0.0, original_end=8.0,
-        planned_start=0.0, planned_end=5.0, planned_duration=5.0, score=90,
+        planned_start=0.0, planned_end=2.5, planned_duration=2.5, score=90,
         shot_role=ShotRole.HERO, role_confidence=0.9,
     )
     clip2 = PlannedReelClip(
         position=2, source_file=synthetic_long_video.name, original_start=10.0, original_end=18.0,
-        planned_start=10.0, planned_end=15.0, planned_duration=5.0, score=90,
+        planned_start=10.0, planned_end=12.5, planned_duration=2.5, score=90,
         shot_role=ShotRole.FULL_VIEW, role_confidence=0.9,
         transition_in=TransitionConfig(type=TransitionType.FADE, duration=1.0),
     )
-    # target = 14s: 2s intro + 10s content + 2s outro.
+    # target = 14s: 2s intro + 5s content + 2s outro + 5s product end card.
     plan = ReelPlan(
         target_duration=14.0, estimated_duration=10.0, duration_difference=0.0,
         clips=[clip1, clip2], processing_time_seconds=0.0,
@@ -588,9 +610,8 @@ def test_compose_reel_with_bumpers_total_duration_matches_target(tmp_path: Path,
 
 
 def test_compose_reel_without_bumpers_is_unaffected_by_the_feature(tmp_path: Path, synthetic_long_video: Path):
-    """A hand-built ReelPlan that never sets intro_seconds/outro_seconds
-    (every pre-existing caller/test) must render exactly as it did before
-    bumpers existed - no bumper clips, no duration shift.
+    """A hand-built plan without bumper durations omits those clips; its
+    five seconds of content and five-second end card fill the ten-second target.
     """
     source_dir = tmp_path / "raw"
     source_dir.mkdir()
@@ -601,12 +622,127 @@ def test_compose_reel_without_bumpers_is_unaffected_by_the_feature(tmp_path: Pat
         planned_start=0.0, planned_end=5.0, planned_duration=5.0, score=90,
         shot_role=ShotRole.HERO, role_confidence=0.9,
     )
-    plan = ReelPlan(target_duration=5.0, estimated_duration=5.0, duration_difference=0.0, clips=[clip], processing_time_seconds=0.0)
+    plan = ReelPlan(target_duration=10.0, estimated_duration=5.0, duration_difference=0.0, clips=[clip], processing_time_seconds=0.0)
     assert plan.intro_seconds == 0.0 and plan.outro_seconds == 0.0
 
     result = compose_reel_from_editor_plan(plan, source_dir=source_dir, output_path=tmp_path / "out.mp4")
 
-    assert result.duration == pytest.approx(5.0, abs=0.5)
+    assert result.duration == pytest.approx(10.0, abs=0.5)
+
+
+@pytest.mark.parametrize(
+    "with_template,with_bumpers",
+    [(False, False), (False, True), (True, False), (True, True)],
+    ids=["no-template-no-bumpers", "no-template-with-bumpers", "template-no-bumpers", "template-with-bumpers"],
+)
+def test_whole_duration_and_full_end_card_with_optional_segments(
+    tmp_path: Path,
+    synthetic_long_video: Path,
+    with_template: bool,
+    with_bumpers: bool,
+):
+    from app.services.video_metadata import get_video_stream_duration
+
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    (source_dir / synthetic_long_video.name).write_bytes(synthetic_long_video.read_bytes())
+    template_path = None
+    if with_template:
+        from PIL import Image
+
+        template_path = tmp_path / "template.png"
+        Image.new("RGB", (108, 192), color=(0, 0, 220)).save(template_path)
+
+    template_seconds = 0.5 if with_template else 0.0
+    intro_seconds = 2.0 if with_bumpers else 0.0
+    outro_seconds = 2.0 if with_bumpers else 0.0
+    target = 14.0
+    content_budget = target - template_seconds - intro_seconds - outro_seconds - 5.0
+    clip = PlannedReelClip(
+        position=1,
+        source_file=synthetic_long_video.name,
+        original_start=0.0,
+        original_end=20.0,
+        planned_start=0.0,
+        planned_end=content_budget,
+        planned_duration=content_budget,
+        score=90,
+        shot_role=ShotRole.HERO,
+        role_confidence=0.9,
+    )
+    plan = ReelPlan(
+        target_duration=target,
+        estimated_duration=content_budget,
+        duration_difference=0.0,
+        estimated_final_duration=target,
+        clips=[clip],
+        processing_time_seconds=0.0,
+        template_seconds=template_seconds,
+        intro_seconds=intro_seconds,
+        outro_seconds=outro_seconds,
+    )
+
+    result = compose_reel_from_editor_plan(
+        plan,
+        source_dir=source_dir,
+        output_path=tmp_path / "out.mp4",
+        template_image_path=template_path,
+    )
+
+    assert plan.estimated_final_duration == pytest.approx(target)
+    assert result.duration == pytest.approx(plan.estimated_final_duration, abs=0.5)
+    assert result.duration_status == "ok"
+    assert get_video_stream_duration(tmp_path / "out.mp4") == pytest.approx(result.duration, abs=0.3)
+
+    end_card_frame = _extract_frames(
+        tmp_path / "out.mp4", [result.duration - 0.25]
+    )[0]
+    # The end card's bottom-right corner is unobstructed and retains its
+    # light background at the end of the video, proving the complete card
+    # survives final muxing and its -t bound.
+    corner_bgr = end_card_frame[-20, -20].astype(int)
+    assert all(abs(int(actual) - expected) < 25 for actual, expected in zip(corner_bgr, (238, 246, 251)))
+
+    if with_template:
+        template_frame = _extract_frames(tmp_path / "out.mp4", [0.25])[0]
+        center_bgr = template_frame[540, 540].astype(int)
+        assert center_bgr[0] > 180 and center_bgr[1] < 50 and center_bgr[2] < 50
+
+
+def test_insufficient_footage_keeps_the_full_end_card_and_reports_short_output(
+    tmp_path: Path, synthetic_video_with_audio: Path
+):
+    from app.services.video_metadata import get_video_stream_duration
+
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    (source_dir / synthetic_video_with_audio.name).write_bytes(synthetic_video_with_audio.read_bytes())
+    clip = _story_clip(1, synthetic_video_with_audio.name, 1.0)
+    plan = ReelPlan(
+        target_duration=15.0,
+        estimated_duration=1.0,
+        duration_difference=-4.0,
+        estimated_final_duration=10.0,
+        clips=[clip],
+        processing_time_seconds=0.0,
+        template_seconds=0.0,
+        intro_seconds=2.0,
+        outro_seconds=2.0,
+    )
+
+    result = compose_reel_from_editor_plan(
+        plan,
+        source_dir=source_dir,
+        output_path=tmp_path / "out.mp4",
+    )
+
+    assert result.duration_status == "insufficient_content"
+    assert result.duration == pytest.approx(10.0, abs=0.5)
+    assert result.duration < result.target_duration
+    assert get_video_stream_duration(tmp_path / "out.mp4") == pytest.approx(result.duration, abs=0.3)
+    end_card_frame = _extract_frames(tmp_path / "out.mp4", [result.duration - 0.25])[0]
+    corner_bgr = end_card_frame[-20, -20].astype(int)
+    assert all(abs(int(actual) - expected) < 25 for actual, expected in zip(corner_bgr, (238, 246, 251)))
 
 
 def test_compose_reel_with_bumpers_intro_and_outro_frames_show_branding(tmp_path: Path, synthetic_long_video: Path):
@@ -626,7 +762,7 @@ def test_compose_reel_with_bumpers_intro_and_outro_frames_show_branding(tmp_path
         shot_role=ShotRole.HERO, role_confidence=0.9,
     )
     plan = ReelPlan(
-        target_duration=10.0, estimated_duration=6.0, duration_difference=0.0,
+        target_duration=15.0, estimated_duration=6.0, duration_difference=0.0,
         clips=[clip], processing_time_seconds=0.0, intro_seconds=2.0, outro_seconds=2.0,
     )
 

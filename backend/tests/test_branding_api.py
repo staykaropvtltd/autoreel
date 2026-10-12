@@ -20,6 +20,9 @@ def _configure_brand(monkeypatch, tmp_path: Path, data: dict, logo_bytes: bytes 
     # here affects every caller regardless of how it imported the functions.
     monkeypatch.setattr(brand_service, "BRANDING_DIR", branding_dir)
     monkeypatch.setattr(brand_service, "BRAND_CONFIG_PATH", branding_dir / "brand.json")
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(brand_service, "USER_BRAND_CONFIG_PATH", user_branding_dir / "brand.json")
 
 
 def test_get_branding_returns_configured_name_and_logo_url(monkeypatch, tmp_path: Path):
@@ -32,6 +35,40 @@ def test_get_branding_returns_configured_name_and_logo_url(monkeypatch, tmp_path
     assert body["name"] == "NEURAX"
     assert body["tagline"] == "AI Studio"
     assert body["logo_url"] == "/api/branding/logo"
+    assert set(body) == {
+        "name", "tagline", "logo_url", "logo_placement",
+        "primary_color", "secondary_color", "text_color",
+    }
+
+
+def test_upload_brand_logo_returns_typed_compatible_fields(monkeypatch, tmp_path: Path):
+    from io import BytesIO
+
+    from PIL import Image
+
+    user_branding_dir = tmp_path / "user_branding"
+    user_branding_dir.mkdir()
+    monkeypatch.setattr(
+        "app.api.branding.save_user_logo",
+        lambda **_kwargs: user_branding_dir / "logo.png",
+    )
+    image = Image.new("RGB", (1, 1), color="white")
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/api/branding/logo",
+        files={"file": ("brand.png", image_bytes.getvalue(), "image/png")},
+        data={"placement": "entire"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "uploaded",
+        "filename": "logo.png",
+        "logo_url": "/api/branding/logo",
+        "placement": "entire",
+    }
 
 
 def test_get_branding_reflects_changed_brand_json(monkeypatch, tmp_path: Path):
@@ -81,7 +118,64 @@ def test_get_branding_logo_ignores_path_traversal_in_config(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(brand_service, "BRANDING_DIR", branding_dir)
     monkeypatch.setattr(brand_service, "BRAND_CONFIG_PATH", branding_dir / "brand.json")
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(brand_service, "USER_BRAND_CONFIG_PATH", user_branding_dir / "brand.json")
 
     response = client.get("/api/branding/logo")
 
     assert response.status_code == 404
+
+
+def test_update_logo_placement_uses_validated_json_body(monkeypatch):
+    placements = []
+    monkeypatch.setattr("app.api.branding.set_logo_placement", placements.append)
+
+    response = client.post("/api/branding/logo/placement", json={"placement": "entire"})
+    assert response.status_code == 200
+    assert response.json() == {"status": "updated", "placement": "entire"}
+    assert placements == ["entire"]
+
+    invalid = client.post("/api/branding/logo/placement", json={"placement": "../../secret"})
+    assert invalid.status_code == 422
+    assert placements == ["entire"]
+
+
+def test_save_user_logo_real_storage_does_not_deadlock(monkeypatch, tmp_path: Path):
+    from io import BytesIO
+
+    from PIL import Image
+
+    # Redirect all storage paths to a temporary directory.
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(
+        brand_service,
+        "USER_BRAND_CONFIG_PATH",
+        user_branding_dir / "brand.json",
+    )
+
+    # Generate a valid PNG image.
+    image_buffer = BytesIO()
+    Image.new("RGB", (10, 10), color="white").save(image_buffer, format="PNG")
+    image_bytes = image_buffer.getvalue()
+
+    # Call the REAL storage function (no mock).
+    logo_path = brand_service.save_user_logo(
+        file_bytes=image_bytes,
+        extension=".png",
+        placement="entire",
+    )
+
+    # Verify the logo was saved.
+    assert logo_path == user_branding_dir / "logo.png"
+    assert logo_path.is_file()
+    assert logo_path.read_bytes() == image_bytes
+
+    # Verify the branding configuration was saved.
+    config_path = user_branding_dir / "brand.json"
+    assert config_path.is_file()
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["logo"] == "logo.png"
+    assert config["logo_placement"] == "entire"

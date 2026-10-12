@@ -220,13 +220,13 @@ export default function AuthPage({
 
           {/* Status Notifications */}
           {error && (
-            <div className="mb-4 p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+            <div role="alert" className="mb-4 p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
           {successMessage && (
-            <div className="mb-4 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
+            <div role="status" aria-live="polite" className="mb-4 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{successMessage}</span>
             </div>
@@ -368,7 +368,7 @@ export default function AuthPage({
                     id="email-address"
                     type="email"
                     required
-                    autoComplete="off"
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@boutique.com"
@@ -397,7 +397,7 @@ export default function AuthPage({
                     id="user-password"
                     type={showPassword ? "text" : "password"}
                     required
-                    autoComplete="new-password"
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter password"
@@ -410,6 +410,7 @@ export default function AuthPage({
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                     className="absolute right-3 top-1/2 -translate-y-1/2 opacity-50 hover:opacity-100 transition-opacity cursor-pointer"
                   >
                     {showPassword ? (

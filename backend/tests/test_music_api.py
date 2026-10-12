@@ -9,6 +9,11 @@ from app.main import app
 client = TestClient(app)
 
 
+def _isolate_music_libraries(monkeypatch, music_dir: Path, tmp_path: Path) -> None:
+    monkeypatch.setattr(music_module, "MUSIC_DIR", music_dir)
+    monkeypatch.setattr(music_module, "CUSTOM_MUSIC_DIR", tmp_path / "custom_music")
+
+
 def _make_audio(path: Path, duration: float = 3.0) -> None:
     subprocess.run(
         [
@@ -21,7 +26,7 @@ def _make_audio(path: Path, duration: float = 3.0) -> None:
 
 def test_list_music_returns_discovered_tracks(tmp_path: Path, monkeypatch):
     _make_audio(tmp_path / "traditional_elegance.mp3")
-    monkeypatch.setattr(music_module, "MUSIC_DIR", tmp_path)
+    _isolate_music_libraries(monkeypatch, tmp_path, tmp_path)
 
     response = client.get("/api/music")
 
@@ -46,7 +51,7 @@ def test_list_music_returns_the_demo_tracks():
 
 
 def test_list_music_empty_when_no_tracks(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(music_module, "MUSIC_DIR", tmp_path)
+    _isolate_music_libraries(monkeypatch, tmp_path, tmp_path)
     response = client.get("/api/music")
     assert response.status_code == 200
     assert response.json() == []
@@ -54,7 +59,7 @@ def test_list_music_empty_when_no_tracks(tmp_path: Path, monkeypatch):
 
 def test_preview_music_serves_audio(tmp_path: Path, monkeypatch):
     _make_audio(tmp_path / "festive_silk.mp3")
-    monkeypatch.setattr(music_module, "MUSIC_DIR", tmp_path)
+    _isolate_music_libraries(monkeypatch, tmp_path, tmp_path)
 
     response = client.get("/api/music/festive_silk/preview")
 
@@ -64,13 +69,13 @@ def test_preview_music_serves_audio(tmp_path: Path, monkeypatch):
 
 
 def test_preview_music_unknown_id_returns_404(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(music_module, "MUSIC_DIR", tmp_path)
+    _isolate_music_libraries(monkeypatch, tmp_path, tmp_path)
     response = client.get("/api/music/does-not-exist/preview")
     assert response.status_code == 404
 
 
 def test_preview_music_does_not_expose_arbitrary_paths(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(music_module, "MUSIC_DIR", tmp_path)
+    _isolate_music_libraries(monkeypatch, tmp_path, tmp_path)
     # No track discovery match for a path-traversal-flavored id -> 404, not
     # a filesystem read outside MUSIC_DIR.
     response = client.get("/api/music/..%2F..%2Fsecrets/preview")

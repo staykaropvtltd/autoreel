@@ -73,54 +73,52 @@ export default function LandingFooter({ onLaunchStudio, onOpenAuth }: LandingFoo
                 isLight ? "text-neutral-700" : "text-neutral-400"
               }`}
             >
-              AI agents for modern ethnic wear video commerce. Curate, reframe, and publish high-converting vertical Reels in minutes.
+              Create, reframe, and publish product videos for the catalogs you choose.
             </p>
 
             {/* Social Media Circular Buttons */}
             <div className="pt-2 flex items-center gap-3">
-              <a
-                href="https://twitter.com"
-                target="_blank"
-                rel="noreferrer"
-                className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all cursor-pointer shadow-xs ${
+              <span
+                title="X account not configured"
+                aria-label="X account not configured"
+                className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all shadow-xs ${
                   isLight
                     ? "bg-black/5 hover:bg-[#1DA1F2]/10 border-black/10 hover:border-[#1DA1F2]/40 text-neutral-900 hover:text-[#1DA1F2]"
                     : "bg-white/5 hover:bg-white/15 border-white/15 text-white"
                 }`}
-                aria-label="X Twitter"
               >
                 <XIcon className="w-4 h-4" />
-              </a>
-              <a
-                href="https://instagram.com"
-                target="_blank"
-                rel="noreferrer"
-                className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all cursor-pointer shadow-xs ${
+              </span>
+              <span
+                title="Instagram account not configured"
+                aria-label="Instagram account not configured"
+                className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all shadow-xs ${
                   isLight
                     ? "bg-black/5 hover:bg-[#E1306C]/10 border-black/10 hover:border-[#E1306C]/40 text-neutral-900 hover:text-[#E1306C]"
                     : "bg-white/5 hover:bg-white/15 border-white/15 text-white"
                 }`}
-                aria-label="Instagram"
               >
                 <InstagramIcon className="w-4.5 h-4.5" />
-              </a>
-              <a
-                href="https://linkedin.com"
-                target="_blank"
-                rel="noreferrer"
-                className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all cursor-pointer shadow-xs ${
+              </span>
+              <span
+                title="LinkedIn account not configured"
+                aria-label="LinkedIn account not configured"
+                className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all shadow-xs ${
                   isLight
                     ? "bg-black/5 hover:bg-[#0A66C2]/10 border-black/10 hover:border-[#0A66C2]/40 text-neutral-900 hover:text-[#0A66C2]"
                     : "bg-white/5 hover:bg-white/15 border-white/15 text-white"
                 }`}
-                aria-label="LinkedIn"
               >
                 <LinkedinIcon className="w-4 h-4" />
-              </a>
+              </span>
             </div>
 
+            <p className={`text-xs ${isLight ? "text-neutral-500" : "text-neutral-500"}`}>
+              Social accounts not configured.
+            </p>
+
             <p className={`text-xs pt-2 font-mono ${isLight ? "text-neutral-500" : "text-neutral-500"}`}>
-              © 2026 Kaladhar Studio. Built for ethnic fashion brands.
+              © 2026 Kaladhar Studio.
             </p>
           </div>
 

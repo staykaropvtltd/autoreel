@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
 from app.services.credit_service import (
     get_balance,
@@ -11,7 +12,16 @@ router = APIRouter(prefix="/credits", tags=["Credits"])
 DEMO_USER_ID = "user_demo"
 
 
-@router.get("")
+class CreditsResponse(BaseModel):
+    user_id: str
+    credits: int = Field(ge=0)
+
+
+class ReelCostResponse(BaseModel):
+    cost: int = Field(gt=0)
+
+
+@router.get("", response_model=CreditsResponse)
 def get_user_credits():
     """
     Get current user's credit balance.
@@ -25,7 +35,7 @@ def get_user_credits():
     }
 
 
-@router.get("/reel-cost")
+@router.get("/reel-cost", response_model=ReelCostResponse)
 def get_reel_cost():
     """
     Return the current cost of generating a reel.

@@ -70,33 +70,49 @@ def get_brand_name() -> str:
 
 def get_brand_logo_path() -> Path | None:
     """Resolve the runtime logo first, then the configured built-in logo."""
+
+    def resolve_logo(root: Path, filename: str | None) -> Path | None:
+        if not isinstance(filename, str) or not filename or Path(filename).name != filename:
+            return None
+        if Path(filename).suffix.lower() not in _ALLOWED_LOGO_EXTENSIONS:
+            return None
+
+        resolved_root = root.resolve()
+        candidate = (root / filename).resolve()
+        if candidate.is_relative_to(resolved_root) and candidate.is_file():
+            return candidate
+        return None
+
+    user_config = _read_json(USER_BRAND_CONFIG_PATH)
+    configured_user_logo = resolve_logo(
+        USER_BRANDING_DIR,
+        user_config.get("logo"),
+    )
+    if configured_user_logo is not None:
+        return configured_user_logo
+
     if USER_BRANDING_DIR.exists():
         for candidate in sorted(USER_BRANDING_DIR.glob("logo.*")):
-            if (
-                candidate.is_file()
-                and candidate.suffix.lower() in _ALLOWED_LOGO_EXTENSIONS
-            ):
-                return candidate
+            resolved = resolve_logo(USER_BRANDING_DIR, candidate.name)
+            if resolved is not None:
+                return resolved
 
-    config = get_brand_config()
-    if config.logo:
-        filename = Path(config.logo).name
-
-        # Only accept a filename, never a path supplied in the config.
-        if filename == config.logo and Path(filename).suffix.lower() in _ALLOWED_LOGO_EXTENSIONS:
-            default_logo = BRANDING_DIR / filename
-            if default_logo.is_file():
-                return default_logo
+    default_config = _read_json(BRAND_CONFIG_PATH)
+    configured_default_logo = resolve_logo(
+        BRANDING_DIR,
+        default_config.get("logo"),
+    )
+    if configured_default_logo is not None:
+        return configured_default_logo
 
     if BRANDING_DIR.exists():
         for candidate in sorted(BRANDING_DIR.glob("logo.*")):
-            if (
-                candidate.is_file()
-                and candidate.suffix.lower() in _ALLOWED_LOGO_EXTENSIONS
-            ):
-                return candidate
+            resolved = resolve_logo(BRANDING_DIR, candidate.name)
+            if resolved is not None:
+                return resolved
 
     return None
+
 
 
 def save_user_logo(file_bytes: bytes, extension: str, placement: str) -> Path:
@@ -110,6 +126,7 @@ def save_user_logo(file_bytes: bytes, extension: str, placement: str) -> Path:
     try:
         with Image.open(io.BytesIO(file_bytes)) as img:
             img.verify()
+        with Image.open(io.BytesIO(file_bytes)) as img:
             width, height = img.size
             if width * height > 25_000_000:
                 raise ValueError("Logo dimensions exceed maximum allowable size")
@@ -132,9 +149,12 @@ def save_user_logo(file_bytes: bytes, extension: str, placement: str) -> Path:
         config = _read_json(USER_BRAND_CONFIG_PATH)
         config["logo"] = logo_path.name
         config["logo_placement"] = placement
-        _write_user_config(config)
 
-        return logo_path
+    # Write the configuration after releasing the lock to avoid deadlock.
+    _write_user_config(config)
+
+    return logo_path
+
 
 
 def get_logo_placement() -> str:

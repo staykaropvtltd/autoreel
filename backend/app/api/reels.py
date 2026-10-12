@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from app.services.music_service import resolve_music_track
 
@@ -43,6 +43,8 @@ from app.services.brand_service import (
     get_brand_name,
 )
 from app.services.reel_editor_renderer import compose_reel_from_editor_plan
+from app.services.product_end_card import END_CARD_DURATION
+from app.services.reel_duration import TEMPLATE_DURATION_SECONDS
 from app.services.reel_planner import (
     PlanningConfig,
     extend_plan_for_transitions,
@@ -109,10 +111,12 @@ class ProductInfoRequest(BaseModel):
 
 
 class GenerateReelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     selected_clips: list[BatchClip] = Field(default=[], max_length=100)
     reel_plan: ReelPlan | None = None
     output_filename: str | None = Field(default=None, max_length=255)
-    analysis_job_id: str | None = Field(default=None, max_length=255)
+    analysis_job_id: uuid.UUID | None = None
     min_total_duration: float = Field(default=10.0, gt=0.0, le=300.0, allow_inf_nan=False)
     max_total_duration: float = Field(default=15.0, gt=0.0, le=300.0, allow_inf_nan=False)
     transition: Literal["cut", "fade", "none", "zoom_in", "zoom_out", "slide_left", "slide_right"] = "cut"
@@ -122,8 +126,16 @@ class GenerateReelRequest(BaseModel):
 
 
 class PlanReelRequest(BaseModel):
-    analysis_job_id: str = Field(min_length=1, max_length=255)
-    target_duration: float = Field(default=15.0, gt=0.0, le=300.0, allow_inf_nan=False)
+    model_config = ConfigDict(extra="forbid")
+
+    analysis_job_id: uuid.UUID
+    target_duration: float = Field(
+        default=15.0,
+        ge=END_CARD_DURATION,
+        le=300.0,
+        allow_inf_nan=False,
+        description="Requested total output duration including all rendered segments.",
+    )
     min_clip_duration: float = Field(default=1.0, gt=0.0, le=60.0, allow_inf_nan=False)
     max_clip_duration: float = Field(default=8.0, gt=0.0, le=60.0, allow_inf_nan=False)
     min_quality_score: float = Field(default=50.0, ge=0.0, le=100.0, allow_inf_nan=False)
@@ -317,7 +329,7 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
     frontend to display/reorder/trim before generation.
     """
 
-    analysis_job = get_analysis_job(request.analysis_job_id)
+    analysis_job = get_analysis_job(str(request.analysis_job_id))
 
     if analysis_job is None:
         raise HTTPException(
@@ -350,11 +362,20 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
             reverse=True,
         )
 
+    template_image_path = _resolve_template_image(str(request.analysis_job_id))
+    template_seconds = TEMPLATE_DURATION_SECONDS if template_image_path is not None else 0.0
+    if request.target_duration < template_seconds + END_CARD_DURATION:
+        raise HTTPException(
+            status_code=422,
+            detail="Target duration must fit the selected template and full end card",
+        )
+
     config = PlanningConfig(
         target_duration=request.target_duration,
         min_clip_duration=request.min_clip_duration,
         max_clip_duration=request.max_clip_duration,
         min_quality_score=request.min_quality_score,
+        template_duration=template_seconds,
     )
 
     reel_plan = plan_reel(candidate_pool, config)
@@ -417,12 +438,34 @@ def generate_reel(
     reel_id = str(uuid.uuid4())
 
     source_dir = _resolve_source_dir(
-        request.analysis_job_id
+        str(request.analysis_job_id) if request.analysis_job_id else None
     )
 
     template_image_path = _resolve_template_image(
-        request.analysis_job_id
+        str(request.analysis_job_id) if request.analysis_job_id else None
     )
+
+    if request.reel_plan is not None:
+        template_seconds = (
+            TEMPLATE_DURATION_SECONDS if template_image_path is not None else 0.0
+        )
+        if (
+            template_seconds
+            + request.reel_plan.intro_seconds
+            + request.reel_plan.outro_seconds
+            + END_CARD_DURATION
+            > request.reel_plan.target_duration + 1e-6
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Reel plan segments exceed the requested total duration",
+            )
+        request.reel_plan = request.reel_plan.model_copy(
+            update={
+                "template_seconds": template_seconds,
+                "end_card_seconds": END_CARD_DURATION,
+            }
+        )
 
     music_path = _resolve_music_path(request.music_filename)
 
@@ -483,7 +526,7 @@ def generate_reel(
             # slack first, then extra candidates from the analysis pool)
             # before rendering, so this stays a single render pass.
             candidate_pool = _get_candidate_pool(
-                request.analysis_job_id
+                str(request.analysis_job_id) if request.analysis_job_id else None
             )
 
             compensated_plan = extend_plan_for_transitions(
@@ -558,6 +601,18 @@ def generate_reel(
             DEMO_USER_ID,
             REEL_GENERATION_COST,
         )
+        if isinstance(exc, EmptySelectionError):
+            detail = "Cannot generate a reel from an empty clip selection."
+        elif isinstance(exc, MissingSourceVideoError):
+            detail = "Source video not found."
+        else:
+            detail = "Invalid clip timestamp."
+
+        raise HTTPException(
+            status_code=400,
+            detail=detail,
+        ) from exc
+
 
     except ValueError as exc:
         logger.warning("Reel request validation failed: %s", exc)
@@ -591,6 +646,21 @@ def generate_reel(
         OutputValidationError,
     ) as exc:
         logger.exception("Reel rendering or output validation failed")
+
+        refund_credits(
+            DEMO_USER_ID,
+            REEL_GENERATION_COST,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="An unexpected error occurred while generating the reel.",
+        ) from exc
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logger.exception("Unexpected error during reel generation")
 
         refund_credits(
             DEMO_USER_ID,
@@ -641,9 +711,10 @@ def generate_reel(
     response_model=ReelGenerateResponse,
 )
 def get_reel(
-    reel_id: str,
+    reel_id: uuid.UUID,
 ) -> ReelGenerateResponse:
 
+    reel_id = str(reel_id)
     job = get_reel_job(reel_id)
 
     if job is None:
@@ -659,8 +730,9 @@ def get_reel(
 
 @router.get("/reels/{reel_id}/download")
 def download_reel(
-    reel_id: str,
+    reel_id: uuid.UUID,
 ) -> FileResponse:
+    reel_id = str(reel_id)
     job = get_reel_job(reel_id)
 
     logger.info("Download requested for reel_id=%s", reel_id)

@@ -9,6 +9,7 @@ from app.services.reel_planner import (
     plan_reel,
     suggest_overlay_placement,
     to_composer_planned_clips,
+    _story_template,
 )
 
 
@@ -85,10 +86,9 @@ def test_plan_reel_60_second_target():
 
 # --- intro/outro bumper reservation (spec: total = intro + content + outro) ---
 @pytest.mark.parametrize(
-    # Content ceiling = target - intro(2) - outro(2) + the two bumper
-    # crossfades reserved back (0.4 each) - see BUMPER_TRANSITION_SECONDS.
+    # Content ceiling = target minus the two bumpers and five-second end card.
     "target,expected_content_ceiling",
-    [(15.0, 11.8), (30.0, 26.8), (45.0, 41.8), (60.0, 56.8)],
+    [(15.0, 6.0), (30.0, 21.0), (45.0, 36.0), (60.0, 51.0)],
 )
 def test_plan_reel_reserves_intro_outro_out_of_total_duration(target, expected_content_ceiling):
     plan = plan_reel(_varied_pool(20), PlanningConfig(target_duration=target))
@@ -96,7 +96,9 @@ def test_plan_reel_reserves_intro_outro_out_of_total_duration(target, expected_c
     assert plan.target_duration == target
     assert plan.intro_seconds == 2.0
     assert plan.outro_seconds == 2.0
-    # Content is planned to fit target - intro - outro, never the full total.
+    assert plan.end_card_seconds == 5.0
+    assert plan.estimated_final_duration == pytest.approx(target)
+    # Planned content stays within the total after reserving every fixed segment.
     assert plan.estimated_duration <= expected_content_ceiling + 1e-6
 
 
@@ -110,6 +112,43 @@ def test_plan_reel_insufficient_footage_still_reserves_bumpers():
     assert plan.intro_seconds == 2.0
     assert plan.outro_seconds == 2.0
     assert plan.estimated_duration < 56.0
+    assert plan.duration_status == "insufficient_content"
+    assert plan.estimated_final_duration == pytest.approx(
+        plan.intro_seconds + plan.estimated_duration + plan.outro_seconds + plan.end_card_seconds
+    )
+
+
+def test_plan_reel_estimate_accounts_for_template_and_full_end_card():
+    plan = plan_reel(
+        _varied_pool(10),
+        PlanningConfig(target_duration=15.0, template_duration=0.5),
+    )
+
+    assert plan.template_seconds == 0.5
+    assert plan.end_card_seconds == 5.0
+    assert plan.intro_seconds == 2.0
+    assert plan.outro_seconds == 2.0
+    assert plan.estimated_duration == pytest.approx(5.5)
+    assert plan.estimated_final_duration == pytest.approx(15.0)
+    assert plan.duration_difference == pytest.approx(0.0)
+    assert plan.duration_status == "ok"
+
+
+def test_plan_reel_omits_bumpers_when_they_do_not_fit_without_shortening_end_card():
+    plan = plan_reel(_varied_pool(10), PlanningConfig(target_duration=8.0))
+
+    assert plan.intro_seconds == 0.0
+    assert plan.outro_seconds == 0.0
+    assert plan.end_card_seconds == 5.0
+    assert plan.estimated_final_duration == pytest.approx(8.0)
+
+
+def test_plan_reel_rejects_target_shorter_than_template_and_end_card():
+    with pytest.raises(ValueError, match="full end card"):
+        plan_reel(
+            _varied_pool(10),
+            PlanningConfig(target_duration=5.0, template_duration=0.5),
+        )
 
 
 # --- never pad with poor footage ---
@@ -130,7 +169,7 @@ def test_plan_reel_insufficient_high_quality_footage_returns_shorter_reel():
 # --- trimming ---
 def test_plan_reel_trims_clip_to_fit_remaining_budget():
     clips = [_clip("v.mp4", 2.0, 6.0, score=95, hash_int=1)]
-    plan = plan_reel(clips, PlanningConfig(target_duration=4.0, min_clip_duration=1.0, max_clip_duration=8.0))
+    plan = plan_reel(clips, PlanningConfig(target_duration=13.0, min_clip_duration=1.0, max_clip_duration=8.0))
 
     assert len(plan.clips) == 1
     planned = plan.clips[0]
@@ -155,6 +194,23 @@ def test_plan_reel_respects_min_clip_duration():
     plan = plan_reel(clips, PlanningConfig(target_duration=15.0, min_clip_duration=1.0))
 
     assert plan.clips == []
+    assert plan.estimated_duration == 0.0
+    assert plan.duration_status == "insufficient_content"
+
+
+def test_plan_reel_breaks_equal_score_ties_deterministically():
+    clips = [
+        _clip("z.mp4", 0.0, 3.0, score=90, hash_int=7),
+        _clip("a.mp4", 0.0, 3.0, score=90, hash_int=7),
+    ]
+
+    first_plan = plan_reel(clips, PlanningConfig(target_duration=15.0))
+    reversed_plan = plan_reel(list(reversed(clips)), PlanningConfig(target_duration=15.0))
+
+    assert first_plan.clips[0].source_file == "a.mp4"
+    assert [clip.source_file for clip in first_plan.clips] == [
+        clip.source_file for clip in reversed_plan.clips
+    ]
 
 
 # --- role assignment / story ordering ---
@@ -162,6 +218,24 @@ def test_plan_reel_starts_with_hero_or_high_role_match():
     plan = plan_reel(_varied_pool(10), PlanningConfig(target_duration=20.0))
     assert len(plan.clips) > 0
     assert plan.clips[0].position == 1
+
+
+def test_story_template_uses_explicit_late_roles_before_final_ending():
+    assert _story_template(0.80) == [
+        ShotRole.FULL_VIEW,
+        ShotRole.PRODUCT_SHOWCASE,
+        ShotRole.HERO,
+    ]
+    assert _story_template(0.949) == [
+        ShotRole.FULL_VIEW,
+        ShotRole.PRODUCT_SHOWCASE,
+        ShotRole.HERO,
+    ]
+    assert _story_template(0.95) == [
+        ShotRole.ENDING,
+        ShotRole.HERO,
+        ShotRole.PRODUCT_SHOWCASE,
+    ]
 
 
 def test_plan_reel_positions_are_sequential():
@@ -183,11 +257,10 @@ def test_plan_reel_does_not_pick_near_identical_hashes_back_to_back_when_alterna
     distinct = _clip("c.mp4", 0.0, 4.0, score=80, hash_int=0xFFFFFFFFFFFFFFFF)
 
     plan = plan_reel(
-        # +4s to offset the intro/outro bumper reservation (spec: bumpers
-        # come out of the total, not on top of it) - leaves the original
-        # 8s of content budget the diversity check below assumes.
+        # Nine seconds are reserved for the two bumpers and end card,
+        # leaving the original 8s of content budget for this check.
         [near_duplicate_a, near_duplicate_b, distinct],
-        PlanningConfig(target_duration=12.0, max_clip_duration=4.0),
+        PlanningConfig(target_duration=17.0, max_clip_duration=4.0),
     )
 
     sources = [c.source_file for c in plan.clips]
@@ -200,7 +273,7 @@ def test_plan_reel_does_not_pick_near_identical_hashes_back_to_back_when_alterna
 # --- duration calculation ---
 def test_plan_reel_duration_difference_calculation():
     plan = plan_reel(_varied_pool(10), PlanningConfig(target_duration=15.0))
-    assert plan.duration_difference == round(plan.estimated_duration - plan.target_duration, 3)
+    assert plan.duration_difference == round(plan.estimated_final_duration - plan.target_duration, 3)
 
 
 def test_plan_reel_empty_pool_returns_empty_plan():
@@ -342,7 +415,7 @@ def test_plan_reel_populates_phase8_defaults():
     assert isinstance(plan.branding.brand_name, str)
     assert plan.content_duration == plan.estimated_duration
     assert plan.transition_overlap_duration == 0.0
-    assert plan.estimated_final_duration == plan.content_duration
+    assert plan.estimated_final_duration == pytest.approx(plan.content_duration + 9.0)
     for clip in plan.clips:
         assert clip.transition_in.type.value == "none"
 
@@ -362,13 +435,18 @@ def test_reel_plan_serialization_round_trip():
 
 
 def _reel_plan(clips: list, target_duration: float) -> ReelPlan:
-    summary = compute_duration_summary(clips)
+    summary = compute_duration_summary(
+        clips,
+        target_duration=target_duration,
+        end_card_seconds=5.0,
+    )
     return ReelPlan(
         target_duration=target_duration,
         estimated_duration=summary["content_duration"],
-        duration_difference=summary["content_duration"] - target_duration,
+        duration_difference=summary["estimated_final_duration"] - target_duration,
         clips=clips,
         processing_time_seconds=0.0,
+        end_card_seconds=5.0,
         **summary,
     )
 
@@ -391,15 +469,16 @@ def test_extend_plan_for_transitions_uses_existing_slack():
         shot_role=ShotRole.FULL_VIEW, role_confidence=0.9,
         transition_in=TransitionConfig(type=TransitionType.FADE, duration=2.0),
     )
-    # Content is 10s; a 12s target leaves a genuine 2s shortfall to fill
+    # Content is 10s; a 17s total target leaves a genuine 2s shortfall to fill
     # from clip 1's own slack.
-    plan = _reel_plan([clip1, clip2], target_duration=12.0)
-    assert plan.estimated_final_duration == 10.0
+    plan = _reel_plan([clip2, clip1], target_duration=17.0)
+    assert plan.estimated_final_duration == 15.0
 
     compensated = extend_plan_for_transitions(plan, candidate_pool=None)
 
     assert compensated.duration_status == "ok"
-    assert compensated.estimated_final_duration == pytest.approx(12.0, abs=0.15)
+    assert compensated.estimated_final_duration == pytest.approx(17.0, abs=0.15)
+    assert [clip.position for clip in compensated.clips] == [1, 2]
     # Clip 1 absorbed the 2s shortfall using its own slack; clip 2 unchanged.
     extended_clip1 = next(c for c in compensated.clips if c.source_file == "a.mp4")
     assert extended_clip1.planned_duration == pytest.approx(7.0, abs=0.01)
@@ -419,15 +498,15 @@ def test_extend_plan_for_transitions_pulls_from_candidate_pool_when_slack_insuff
         shot_role=ShotRole.FULL_VIEW, role_confidence=0.9,
         transition_in=TransitionConfig(type=TransitionType.FADE, duration=2.0),
     )
-    # Content is 10s with no slack in either clip; a 12s target leaves a
+    # Content is 10s with no slack in either clip; a 17s total target leaves a
     # genuine 2s shortfall only the candidate pool can fill.
-    plan = _reel_plan([clip1, clip2], target_duration=12.0)
+    plan = _reel_plan([clip1, clip2], target_duration=17.0)
 
     pool = [_clip("c.mp4", 0.0, 4.0, score=85, hash_int=99)]
     compensated = extend_plan_for_transitions(plan, candidate_pool=pool)
 
     assert compensated.duration_status == "ok"
-    assert compensated.estimated_final_duration == pytest.approx(12.0, abs=0.15)
+    assert compensated.estimated_final_duration == pytest.approx(17.0, abs=0.15)
     assert any(c.source_file == "c.mp4" for c in compensated.clips)
 
 
@@ -445,15 +524,15 @@ def test_extend_plan_for_transitions_reports_insufficient_content_honestly():
         shot_role=ShotRole.FULL_VIEW, role_confidence=0.9,
         transition_in=TransitionConfig(type=TransitionType.FADE, duration=2.0),
     )
-    # Content is 10s with no slack in either clip; nothing can close a 12s
-    # target's 2s shortfall.
-    plan = _reel_plan([clip1, clip2], target_duration=12.0)
+    # Content is 10s with no slack in either clip; nothing can close the
+    # 12s content budget inside a 17s total target.
+    plan = _reel_plan([clip1, clip2], target_duration=17.0)
 
-    # No pool, no slack -> genuinely cannot reach 12s; must not fabricate.
+    # No pool, no slack -> genuinely cannot reach 12s of content; must not fabricate.
     compensated = extend_plan_for_transitions(plan, candidate_pool=None)
 
     assert compensated.duration_status == "insufficient_content"
-    assert compensated.estimated_final_duration == pytest.approx(10.0, abs=0.01)
+    assert compensated.estimated_final_duration == pytest.approx(15.0, abs=0.01)
 
 
 def test_extend_plan_for_transitions_never_reuses_a_low_quality_candidate():
@@ -470,13 +549,13 @@ def test_extend_plan_for_transitions_never_reuses_a_low_quality_candidate():
         shot_role=ShotRole.FULL_VIEW, role_confidence=0.9,
         transition_in=TransitionConfig(type=TransitionType.FADE, duration=2.0),
     )
-    # Content is 10s with no slack; a 12s target leaves a genuine 2s
+    # Content is 10s with no slack; a 17s total target leaves a genuine 2s
     # shortfall that only a real (quality-passing) candidate could fill.
-    plan = _reel_plan([clip1, clip2], target_duration=12.0)
+    plan = _reel_plan([clip1, clip2], target_duration=17.0)
 
     low_quality_pool = [_clip("bad.mp4", 0.0, 4.0, score=10, hash_int=99)]
     compensated = extend_plan_for_transitions(
-        plan, candidate_pool=low_quality_pool, config=PlanningConfig(target_duration=12.0, min_quality_score=50.0)
+        plan, candidate_pool=low_quality_pool, config=PlanningConfig(target_duration=17.0, min_quality_score=50.0)
     )
 
     assert compensated.duration_status == "insufficient_content"
@@ -491,7 +570,7 @@ def test_extend_plan_for_transitions_noop_when_already_at_target():
         planned_start=0.0, planned_end=5.0, planned_duration=5.0, score=90,
         shot_role=ShotRole.HERO, role_confidence=0.9,
     )
-    plan = _reel_plan([clip1], target_duration=5.0)
+    plan = _reel_plan([clip1], target_duration=10.0)
 
     compensated = extend_plan_for_transitions(plan, candidate_pool=None)
 

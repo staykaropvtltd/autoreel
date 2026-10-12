@@ -26,6 +26,9 @@ def _configure_brand(monkeypatch, tmp_path: Path, name: str, logo_bytes: bytes |
     (branding_dir / "brand.json").write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(brand_service, "BRANDING_DIR", branding_dir)
     monkeypatch.setattr(brand_service, "BRAND_CONFIG_PATH", branding_dir / "brand.json")
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(brand_service, "USER_BRAND_CONFIG_PATH", user_branding_dir / "brand.json")
 
 
 def _plan(source_file: str, brand_name_from_client: str) -> ReelPlan:
@@ -35,7 +38,7 @@ def _plan(source_file: str, brand_name_from_client: str) -> ReelPlan:
         shot_role=ShotRole.HERO, role_confidence=0.9,
     )
     return ReelPlan(
-        target_duration=10.0, estimated_duration=6.0, duration_difference=0.0,
+        target_duration=15.0, estimated_duration=6.0, duration_difference=0.0,
         clips=[clip], processing_time_seconds=0.0, intro_seconds=2.0, outro_seconds=2.0,
         # A client-supplied brand name that must be IGNORED by the renderer -
         # the whole point of this test suite.

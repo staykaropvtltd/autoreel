@@ -424,7 +424,29 @@ export default function AudioWaveformCutter({
       <div
         ref={trackRef}
         className={`awc-track ${isDragging ? "awc-dragging" : ""}`}
+        role="slider"
+        tabIndex={0}
+        aria-label="Audio cut start time"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, sourceDuration - targetDuration)}
+        aria-valuenow={clampedStart}
+        aria-valuetext={`Cut from ${formatTimecode(clampedStart)} to ${formatTimecode(endTime)}`}
         style={{ height: TRACK_HEIGHT }}
+        onKeyDown={(event) => {
+          const maxStart = Math.max(0, sourceDuration - targetDuration);
+          let nextStart: number | null = null;
+          if (event.key === "ArrowLeft" || event.key === "ArrowDown") nextStart = clampedStart - 0.5;
+          if (event.key === "ArrowRight" || event.key === "ArrowUp") nextStart = clampedStart + 0.5;
+          if (event.key === "PageDown") nextStart = clampedStart - 5;
+          if (event.key === "PageUp") nextStart = clampedStart + 5;
+          if (event.key === "Home") nextStart = 0;
+          if (event.key === "End") nextStart = maxStart;
+          if (nextStart !== null) {
+            event.preventDefault();
+            setStartTime(Math.max(0, Math.min(maxStart, nextStart)));
+            stopAudition();
+          }
+        }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

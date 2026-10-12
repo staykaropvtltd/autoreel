@@ -15,6 +15,7 @@ _upload_jobs: dict[str, dict[str, Any]] = {}
 _analysis_jobs: dict[str, dict[str, Any]] = {}
 _reel_jobs: dict[str, dict[str, Any]] = {}
 _template_images: dict[str, dict[str, Any]] = {}
+_ANALYSIS_TERMINAL_STATUSES = {"completed", "failed"}
 
 
 def create_upload_job(job_id: str, files: list[dict[str, Any]]) -> None:
@@ -44,8 +45,10 @@ def create_analysis_job(
 
 def update_analysis_job(job_id: str, **fields: Any) -> None:
     with _lock:
-        if job_id in _analysis_jobs:
-            _analysis_jobs[job_id].update(fields)
+        job = _analysis_jobs.get(job_id)
+        if job is None or job.get("status") in _ANALYSIS_TERMINAL_STATUSES:
+            return
+        job.update(fields)
 
 
 def get_analysis_job(job_id: str) -> dict[str, Any] | None:

@@ -10,6 +10,9 @@ def _write_brand_json(monkeypatch, tmp_path: Path, data: dict) -> None:
     (branding_dir / "brand.json").write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(brand_service, "BRANDING_DIR", branding_dir)
     monkeypatch.setattr(brand_service, "BRAND_CONFIG_PATH", branding_dir / "brand.json")
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(brand_service, "USER_BRAND_CONFIG_PATH", user_branding_dir / "brand.json")
 
 
 def test_get_brand_config_loads_from_brand_json(monkeypatch, tmp_path: Path):
@@ -36,6 +39,9 @@ def test_get_brand_logo_path_resolves_within_branding_dir(monkeypatch, tmp_path:
     (branding_dir / "neurax.jpeg").write_bytes(b"fake-jpeg-bytes")
     monkeypatch.setattr(brand_service, "BRANDING_DIR", branding_dir)
     monkeypatch.setattr(brand_service, "BRAND_CONFIG_PATH", branding_dir / "brand.json")
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(brand_service, "USER_BRAND_CONFIG_PATH", user_branding_dir / "brand.json")
 
     logo_path = brand_service.get_brand_logo_path()
 
@@ -63,6 +69,9 @@ def test_get_brand_logo_path_rejects_path_traversal(monkeypatch, tmp_path: Path)
     )
     monkeypatch.setattr(brand_service, "BRANDING_DIR", branding_dir)
     monkeypatch.setattr(brand_service, "BRAND_CONFIG_PATH", branding_dir / "brand.json")
+    user_branding_dir = tmp_path / "user_branding"
+    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
+    monkeypatch.setattr(brand_service, "USER_BRAND_CONFIG_PATH", user_branding_dir / "brand.json")
 
     # "../secret.jpeg" resolves to the bare filename "secret.jpeg" inside
     # BRANDING_DIR (which doesn't exist there) - never the real file outside it.

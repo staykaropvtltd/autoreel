@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ClipData } from "../types";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 
 interface ClipCardProps {
   clip: ClipData;
@@ -33,6 +34,8 @@ export default function ClipCard({
 }: ClipCardProps) {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const closePreview = () => setIsPreviewOpen(false);
+  const previewDialogRef = useDialogFocus<HTMLDivElement>(isPreviewOpen, closePreview);
 
   useEffect(() => {
     if (!file) {
@@ -47,23 +50,6 @@ export default function ClipCard({
       URL.revokeObjectURL(url);
     };
   }, [file]);
-
-  // Close modal with Escape key
-  useEffect(() => {
-    if (!isPreviewOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsPreviewOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isPreviewOpen]);
 
   return (
     <>
@@ -182,6 +168,11 @@ export default function ClipCard({
         >
           {/* MODAL */}
           <div
+            ref={previewDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview clip ${clip.source_file}`}
+            tabIndex={-1}
             className="relative w-full max-w-3xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >

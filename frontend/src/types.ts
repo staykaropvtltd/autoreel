@@ -161,8 +161,10 @@ export interface ReelPlan {
   estimated_final_duration: number;
   music: MusicSelection | null;
   duration_status: string;
+  template_seconds: number;
   intro_seconds: number;
   outro_seconds: number;
+  end_card_seconds: number;
 }
 
 export interface ProductOverlayInfo {
