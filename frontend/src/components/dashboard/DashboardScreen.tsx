@@ -192,7 +192,7 @@ useEffect(() => {
   const [mobileMenuOpen, setMobileMenuOpen] =
     useState(false);
 
-  const [sidebarCollapsed, setSidebarCollapsed] =
+  const [sidebarCollapsed] =
   useState(false);
 
   const [activeCinemaReel, setActiveCinemaReel] =
@@ -2261,111 +2261,6 @@ function DashfolioReelCard({
     </article>
   );
 }
-function PreviousWorkCard({
-  project,
-}: {
-  project: ReelProject;
-}) {
-  return (
-    <article className="dashboard-reel-card">
-
-      {/* PREVIEW */}
-      <div className="reel-preview">
-
-        <img
-          src={project.thumbnailUrl}
-          alt={project.title}
-        />
-
-        <div className="reel-gradient" />
-
-        {/* TOP */}
-        <div className="reel-top">
-
-          <span className="reel-category">
-            {project.category}
-          </span>
-
-          <span className="reel-duration">
-            {project.durationSeconds}s
-          </span>
-
-        </div>
-
-
-        {/* PLAY */}
-        <div className="reel-play">
-          <div>
-            <Play />
-          </div>
-        </div>
-
-
-        {/* INFO */}
-        <div className="reel-overlay-info">
-
-          {project.productPrice && (
-            <span className="reel-price">
-              {project.productPrice}
-            </span>
-          )}
-
-          <h3>
-            {project.title}
-          </h3>
-
-        </div>
-
-      </div>
-
-
-      {/* FOOTER */}
-      <div className="reel-card-footer">
-
-        <div className="reel-meta">
-
-          <span>
-            <Calendar />
-
-            {project.createdAt}
-          </span>
-
-          {project.viewsCount && (
-            <strong>
-              {project.viewsCount} views
-            </strong>
-          )}
-
-        </div>
-
-
-        <div className="reel-card-actions">
-
-          <button type="button">
-            <Play />
-            <span>Play</span>
-          </button>
-
-          <button type="button">
-            <Maximize2 />
-            <span>View</span>
-          </button>
-
-          <a
-            href={project.videoUrl}
-            download
-          >
-            <Download />
-            <span>Save</span>
-          </a>
-
-        </div>
-
-      </div>
-
-    </article>
-  );
-}
 function PreviousWorksPage({
   projects,
   showSamplePreview,
@@ -2878,15 +2773,6 @@ function SettingsPage({
   ) => void;
   onLogout: () => void;
 }) {
-  const [reelFormat, setReelFormat] =
-    useState("1080 × 1920");
-
-  const [aspectRatio, setAspectRatio] =
-    useState("9:16");
-
-  const [exportFormat, setExportFormat] =
-    useState("MP4");
-
   const [autoSave, setAutoSave] =
     useState(true);
 
@@ -2894,15 +2780,6 @@ function SettingsPage({
     useState(true);
 
   const [compactLayout, setCompactLayout] =
-    useState(false);
-
-  const [showFormatMenu, setShowFormatMenu] =
-    useState(false);
-
-  const [showAspectMenu, setShowAspectMenu] =
-    useState(false);
-
-  const [showExportMenu, setShowExportMenu] =
     useState(false);
 
   /* =====================================================

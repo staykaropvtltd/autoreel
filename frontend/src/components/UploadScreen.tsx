@@ -96,15 +96,6 @@ const templateInputRef =
   };
 
 
-  const removeFile = (
-    index: number
-  ) => {
-    onFilesChange(
-      files.filter(
-        (_, i) => i !== index
-      )
-    );
-  };
   const handleTemplateImage = async (
   file: File | null
 ) => {
