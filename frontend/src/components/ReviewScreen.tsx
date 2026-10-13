@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { getCredits, getReelCost } from "../api";
 import type { AnalysisSummary, ClipData } from "../types";
 import ClipCard from "./ClipCard";
 
@@ -23,6 +25,8 @@ interface ReviewScreenProps {
   error: string | null;
   onRetryPlan: () => void;
   onDismissError: () => void;
+  credits?: number | null;
+  reelCost?: number | null;
 }
 
 function Stat({
@@ -60,7 +64,34 @@ export default function ReviewScreen({
   error,
   onRetryPlan,
   onDismissError,
+  credits: propsCredits,
+  reelCost: propsReelCost,
 }: ReviewScreenProps) {
+  const [localCredits, setLocalCredits] = useState<number | null>(null);
+  const [localReelCost, setLocalReelCost] = useState<number | null>(null);
+
+  const credits = propsCredits !== undefined ? propsCredits : localCredits;
+  const reelCost = propsReelCost !== undefined ? propsReelCost : localReelCost;
+
+  useEffect(() => {
+    if (propsCredits !== undefined && propsReelCost !== undefined) return;
+    let mounted = true;
+    Promise.all([
+      getCredits().catch(() => null),
+      getReelCost().catch(() => null),
+    ]).then(([credRes, costRes]) => {
+      if (!mounted) return;
+      if (credRes && typeof credRes.credits === "number") setLocalCredits(credRes.credits);
+      if (costRes && typeof costRes.cost === "number") setLocalReelCost(costRes.cost);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [propsCredits, propsReelCost]);
+
+  const hasInsufficientCredits =
+    credits !== null && reelCost !== null && credits < reelCost;
+
   return (
     <div className="max-w-5xl w-full mx-auto px-4 py-10 space-y-8">
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -253,15 +284,35 @@ export default function ReviewScreen({
       )}
 
       {/* CONTINUE */}
-      <div className="sticky bottom-4 flex justify-center">
+      <div className="sticky bottom-4 flex flex-col items-center gap-2">
+        <div className="flex items-center gap-4 text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface)] px-4 py-2 rounded-full border border-[var(--color-border)] shadow-xs">
+          <span>
+            Reel Cost: <strong className="text-[var(--color-text-primary)]">{reelCost !== null ? `${reelCost} credits` : "…"}</strong>
+          </span>
+          <span>•</span>
+          <span>
+            Credit Balance: <strong className="text-[var(--color-text-primary)]">{credits !== null ? `${credits} credits` : "…"}</strong>
+          </span>
+        </div>
+
+        {hasInsufficientCredits && (
+          <p
+            role="alert"
+            className="text-xs text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 rounded-md px-3 py-1.5"
+          >
+            Insufficient credits. Generation requires {reelCost} credits (current balance: {credits}).
+          </p>
+        )}
+
         <button
           onClick={onContinue}
           disabled={
             planLoading ||
             !planPreview ||
-            planPreview.clip_count === 0
+            planPreview.clip_count === 0 ||
+            hasInsufficientCredits
           }
-          className="rounded-md bg-[var(--color-brand-primary)] disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-secondary)] text-white font-medium px-8 py-3 shadow-lg hover:opacity-90 transition-opacity"
+          className="rounded-md bg-[var(--color-brand-primary)] disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-secondary)] text-white font-medium px-8 py-3 shadow-lg hover:opacity-90 transition-opacity disabled:cursor-not-allowed"
         >
           Continue
         </button>

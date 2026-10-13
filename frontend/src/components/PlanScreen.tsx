@@ -3,6 +3,8 @@ import {
   listMusic,
   musicPreviewUrl,
   uploadMusic,
+  getCredits,
+  getReelCost,
 } from "../api";
 import type {
   MusicTrack,
@@ -26,6 +28,8 @@ interface PlanScreenProps {
   onGenerate: () => void;
   onBack: () => void;
   error: string | null;
+  credits?: number | null;
+  reelCost?: number | null;
 
   selectedMusic: MusicTrack | null;
   onMusicChange: (track: MusicTrack | null) => void;
@@ -58,9 +62,35 @@ export default function PlanScreen({
    onGenerate,
   onBack,
   error,
+  credits: propsCredits,
+  reelCost: propsReelCost,
   selectedMusic,
   onMusicChange,
 }: PlanScreenProps) {
+  const [localCredits, setLocalCredits] = useState<number | null>(null);
+  const [localReelCost, setLocalReelCost] = useState<number | null>(null);
+
+  const credits = propsCredits !== undefined ? propsCredits : localCredits;
+  const reelCost = propsReelCost !== undefined ? propsReelCost : localReelCost;
+
+  useEffect(() => {
+    if (propsCredits !== undefined && propsReelCost !== undefined) return;
+    let mounted = true;
+    Promise.all([
+      getCredits().catch(() => null),
+      getReelCost().catch(() => null),
+    ]).then(([credRes, costRes]) => {
+      if (!mounted) return;
+      if (credRes && typeof credRes.credits === "number") setLocalCredits(credRes.credits);
+      if (costRes && typeof costRes.cost === "number") setLocalReelCost(costRes.cost);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [propsCredits, propsReelCost]);
+
+  const hasInsufficientCredits =
+    credits !== null && reelCost !== null && credits < reelCost;
     const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([]);
   const [musicLoading, setMusicLoading] = useState(true);
   const [musicError, setMusicError] = useState<string | null>(null);
@@ -397,6 +427,25 @@ export default function PlanScreen({
         </p>
       )}
 
+      {/* Credit & Cost Information */}
+      <div className="flex flex-wrap items-center justify-between p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs">
+        <span className="text-[var(--color-text-secondary)]">
+          Reel Cost: <strong className="text-[var(--color-text-primary)]">{reelCost !== null ? `${reelCost} credits` : "…"}</strong>
+        </span>
+        <span className="text-[var(--color-text-secondary)]">
+          Available Balance: <strong className="text-[var(--color-text-primary)]">{credits !== null ? `${credits} credits` : "…"}</strong>
+        </span>
+      </div>
+
+      {hasInsufficientCredits && (
+        <p
+          role="alert"
+          className="text-xs text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 rounded-md px-3 py-2 text-center"
+        >
+          Insufficient credits. Generation requires {reelCost} credits (current balance: {credits}).
+        </p>
+      )}
+
       {/* Bottom Buttons */}
       <div className="flex gap-3">
         <button
@@ -410,8 +459,8 @@ export default function PlanScreen({
         <button
           type="button"
           onClick={onGenerate}
-          disabled={clips.length === 0}
-          className="flex-1 rounded-md bg-[var(--color-brand-primary)] disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-secondary)] text-white font-medium py-2.5 hover:opacity-90 transition-opacity"
+          disabled={clips.length === 0 || hasInsufficientCredits}
+          className="flex-1 rounded-md bg-[var(--color-brand-primary)] disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-secondary)] text-white font-medium py-2.5 hover:opacity-90 transition-opacity disabled:cursor-not-allowed"
         >
           Generate Reel
         </button>

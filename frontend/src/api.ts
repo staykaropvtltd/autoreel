@@ -111,6 +111,11 @@ export async function getCredits(): Promise<{ credits: number }> {
   return response.data;
 }
 
+export async function getReelCost(): Promise<{ cost: number }> {
+  const response = await api.get<{ cost: number }>("/credits/reel-cost");
+  return response.data;
+}
+
 export async function getReelStatus(reelId: string): Promise<ReelResult> {
   const response = await api.get<ReelResult>(`/reels/${reelId}`);
   return response.data;

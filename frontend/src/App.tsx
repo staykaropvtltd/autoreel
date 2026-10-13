@@ -4,7 +4,9 @@ import {
   apiErrorMessage,
   generateReel,
   getAnalysis,
+  getCredits,
   getDemoStatus,
+  getReelCost,
   planReel,
   startAnalysis,
   uploadVideos,
@@ -153,11 +155,24 @@ export default function App() {
   const [error, setError] =
     useState<string | null>(null);
 
+  const [credits, setCredits] = useState<number | null>(null);
+  const [reelCost, setReelCost] = useState<number | null>(null);
+
   const pollTimer =
     useRef<number | null>(null);
 
   const planRequestId =
     useRef(0);
+
+  useEffect(() => {
+    const fetchBalanceAndCost = () => {
+      getCredits().then((c) => setCredits(c.credits)).catch(() => {});
+      getReelCost().then((r) => setReelCost(r.cost)).catch(() => {});
+    };
+    fetchBalanceAndCost();
+    window.addEventListener("credits-updated", fetchBalanceAndCost);
+    return () => window.removeEventListener("credits-updated", fetchBalanceAndCost);
+  }, []);
 
 
   /* =========================================================
@@ -726,6 +741,13 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         return;
       }
 
+      if (credits !== null && reelCost !== null && credits < reelCost) {
+        setError(
+          `Insufficient credits. Generation requires ${reelCost} credits (current balance: ${credits}).`
+        );
+        return;
+      }
+
       setError(null);
 
       setScreen(
@@ -819,6 +841,7 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         );
 
         setReel(result);
+        getCredits().then((c) => setCredits(c.credits)).catch(() => {});
 
         setReelPlan(
           finalPlan
@@ -947,6 +970,13 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         return;
       }
 
+      if (credits !== null && reelCost !== null && credits < reelCost) {
+        setError(
+          `Insufficient credits. Generation requires ${reelCost} credits (current balance: ${credits}).`
+        );
+        return;
+      }
+
       setError(null);
 
       setGenerating(true);
@@ -962,6 +992,7 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
           });
 
         setReel(result);
+        getCredits().then((c) => setCredits(c.credits)).catch(() => {});
       } catch (err) {
         setError(
           axiosErrorMessage(err)
@@ -1294,6 +1325,8 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                 }
 
                 onDismissError={() => setError(null)}
+                credits={credits}
+                reelCost={reelCost}
               />
             )}
 
@@ -1320,6 +1353,8 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
   onGenerate={handleGenerate}
   onBack={() => setScreen("review")}
   error={error}
+  credits={credits}
+  reelCost={reelCost}
   selectedMusic={selectedMusic}
   onMusicChange={setSelectedMusic}
 />
@@ -1386,6 +1421,8 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                   error={
                     error
                   }
+                  credits={credits}
+                  reelCost={reelCost}
                 />
 
 
