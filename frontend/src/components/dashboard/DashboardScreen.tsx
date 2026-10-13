@@ -72,60 +72,7 @@ interface DashboardScreenProps {
    SAMPLE PROJECTS
    ========================================================= */
 
-const SAMPLE_PROJECTS_PRESET: ReelProject[] = [
-  {
-    id: "reel-001",
-    title: "Banarasi Katan Silk Saree · Festive Drop",
-    category: "Sarees",
-    durationSeconds: 15,
-    resolution: "1080x1920 (9:16)",
-    videoUrl: "/sample_reel_1.mp4",
-    thumbnailUrl: "/tv_model_1.jpg",
-    createdAt: "Just now",
-    viewsCount: "18.4K",
-    status: "ready",
-    productPrice: "₹14,500",
-  },
-  {
-    id: "reel-002",
-    title: "Bridal Crimson Velvet Lehenga · Heritage Edition",
-    category: "Bridal",
-    durationSeconds: 10,
-    resolution: "1080x1920 (9:16)",
-    videoUrl: "/sample_reel_2.mp4",
-    thumbnailUrl: "/tv_model_2.jpg",
-    createdAt: "Yesterday",
-    viewsCount: "42.1K",
-    status: "ready",
-    productPrice: "₹48,000",
-  },
-  {
-    id: "reel-003",
-    title: "Chanderi Zari Handloom Saree · Summer Edit",
-    category: "Sarees",
-    durationSeconds: 12,
-    resolution: "1080x1920 (9:16)",
-    videoUrl: "/sample_reel_3.mp4",
-    thumbnailUrl: "/tv_model_3.jpg",
-    createdAt: "2 days ago",
-    viewsCount: "9.8K",
-    status: "ready",
-    productPrice: "₹8,900",
-  },
-  {
-    id: "reel-004",
-    title: "Pastel Mulberry Silk Anarkali Pret",
-    category: "Kurtis",
-    durationSeconds: 15,
-    resolution: "1080x1920 (9:16)",
-    videoUrl: "/sample_reel_4.mp4",
-    thumbnailUrl: "/tv_editorial_1.jpg",
-    createdAt: "3 days ago",
-    viewsCount: "26.3K",
-    status: "ready",
-    productPrice: "₹11,200",
-  },
-];
+const SAMPLE_PROJECTS_PRESET: ReelProject[] = [];
 
 /* =========================================================
    DASHBOARD
@@ -1489,21 +1436,27 @@ const handleSaveProfile = (
                ================================================= */
 
             <div className="no-results page-enter">
-              <Search />
+              {projects.length === 0 ? (
+                <p role="status">No reels created yet. Click "+ Create Reel" to get started.</p>
+              ) : (
+                <>
+                  <Search />
 
-              <p>
-                No Reels match "{searchQuery}"
-              </p>
+                  <p>
+                    No Reels match "{searchQuery}"
+                  </p>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery("");
-                  setSelectedCategory("All");
-                }}
-              >
-                Clear filters
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setSelectedCategory("All");
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                </>
+              )}
             </div>
           )}
           </>
