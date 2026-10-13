@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Literal
+import uuid
 import re
 
 from pydantic import BaseModel, Field, field_validator
@@ -59,6 +60,7 @@ class TransitionConfig(BaseModel):
 
 
 class PlannedReelClip(BaseModel):
+    clip_id: uuid.UUID | None = None
     position: int = Field(
         ge=1,
         le=1000,
@@ -453,7 +455,7 @@ class ReelPlan(BaseModel):
     template_seconds: float = Field(
         default=0.0,
         ge=0.0,
-        le=30.0,
+        le=1.0,
         allow_inf_nan=False,
         description="Duration of the selected template segment in the final file.",
     )

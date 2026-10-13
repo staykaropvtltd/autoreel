@@ -1,9 +1,11 @@
 import uuid
+import os
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal
 from app.services.music_service import resolve_music_track
 
@@ -16,17 +18,25 @@ from app.services.credit_service import (
 
 from app.core.job_store import (
     create_reel_job,
+    get_reel_job_by_request_id,
     get_analysis_job,
     get_reel_job,
     get_template_image,
+    update_reel_job,
 )
 from app.core.security import safe_filename
 from app.schemas.batch import BatchClip, SelectionStatus
-from app.schemas.reel import ReelGenerateResponse, ReelResult
+from app.schemas.reel import (
+    ReelGenerateResponse,
+    ReelJobAcceptedResponse,
+    ReelJobStatusResponse,
+    ReelResult,
+)
 from app.schemas.story import ReelPlan
 from app.services.ffmpeg_service import (
     FFmpegNotAvailableError,
     FFmpegProcessingError,
+    set_render_deadline,
 )
 from app.services.reel_composer import (
     BrandConfig,
@@ -37,6 +47,7 @@ from app.services.reel_composer import (
     ReelCompositionConfig,
     compose_reel,
 )
+from app.services.clip_identity import clips_by_id, ensure_analysis_clip_ids
 from app.services.brand_service import (
     get_brand_config,
     get_brand_logo_path,
@@ -44,13 +55,15 @@ from app.services.brand_service import (
 )
 from app.services.reel_editor_renderer import compose_reel_from_editor_plan
 from app.services.product_end_card import END_CARD_DURATION
-from app.services.reel_duration import TEMPLATE_DURATION_SECONDS
+from app.services.reel_duration import get_template_duration_seconds
 from app.services.reel_planner import (
     PlanningConfig,
     extend_plan_for_transitions,
     plan_reel,
 )
 import logging
+from threading import BoundedSemaphore
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 from app.services.thumbnail_service import attach_thumbnails
@@ -84,6 +97,12 @@ MUSIC_LIBRARIES = [
 
 # Temporary user ID until authentication is implemented
 DEMO_USER_ID = "user_demo"
+_REEL_SLOTS = BoundedSemaphore(2)
+_REEL_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reel-render")
+try:
+    _REEL_JOB_TIMEOUT_SECONDS = max(1, int(os.getenv("AUTOREEL_REEL_TIMEOUT_SECONDS", "7200")))
+except ValueError:
+    _REEL_JOB_TIMEOUT_SECONDS = 7200
 
 
 class BrandRequest(BaseModel):
@@ -115,8 +134,10 @@ class GenerateReelRequest(BaseModel):
 
     selected_clips: list[BatchClip] = Field(default=[], max_length=100)
     reel_plan: ReelPlan | None = None
+    selected_clip_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     output_filename: str | None = Field(default=None, max_length=255)
     analysis_job_id: uuid.UUID | None = None
+    request_id: uuid.UUID | None = None
     min_total_duration: float = Field(default=10.0, gt=0.0, le=300.0, allow_inf_nan=False)
     max_total_duration: float = Field(default=15.0, gt=0.0, le=300.0, allow_inf_nan=False)
     transition: Literal["cut", "fade", "none", "zoom_in", "zoom_out", "slide_left", "slide_right"] = "cut"
@@ -124,11 +145,21 @@ class GenerateReelRequest(BaseModel):
     brand: BrandRequest = Field(default_factory=BrandRequest)
     product: ProductInfoRequest | None = None
 
+    @field_validator("selected_clip_ids")
+    @classmethod
+    def reject_duplicate_generation_clip_ids(
+        cls, value: list[uuid.UUID] | None
+    ) -> list[uuid.UUID] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("selected_clip_ids must not contain duplicates")
+        return value
+
 
 class PlanReelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     analysis_job_id: uuid.UUID
+    selected_clip_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     target_duration: float = Field(
         default=15.0,
         ge=END_CARD_DURATION,
@@ -139,6 +170,15 @@ class PlanReelRequest(BaseModel):
     min_clip_duration: float = Field(default=1.0, gt=0.0, le=60.0, allow_inf_nan=False)
     max_clip_duration: float = Field(default=8.0, gt=0.0, le=60.0, allow_inf_nan=False)
     min_quality_score: float = Field(default=50.0, ge=0.0, le=100.0, allow_inf_nan=False)
+
+    @field_validator("selected_clip_ids")
+    @classmethod
+    def reject_duplicate_clip_ids(
+        cls, value: list[uuid.UUID] | None
+    ) -> list[uuid.UUID] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("selected_clip_ids must not contain duplicates")
+        return value
 
 
 def _resolve_source_dir(analysis_job_id: str | None) -> Path:
@@ -265,7 +305,6 @@ def _get_candidate_pool(
         return None
 
     batch_result = analysis_job["result"]
-
     candidate_pool = [
         clip
         for clip in batch_result.all_clips
@@ -275,7 +314,6 @@ def _get_candidate_pool(
             SelectionStatus.REJECTED_NOT_SELECTED,
         )
     ]
-
     if not candidate_pool and batch_result.all_clips:
         candidate_pool = sorted(
             batch_result.all_clips,
@@ -344,26 +382,38 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
         )
 
     batch_result = analysis_job["result"]
+    ensure_analysis_clip_ids(str(request.analysis_job_id), batch_result)
 
-    candidate_pool = [
-        clip
-        for clip in batch_result.all_clips
-        if clip.status
-        in (
-            SelectionStatus.SELECTED,
-            SelectionStatus.REJECTED_NOT_SELECTED,
-        )
-    ]
-
-    if not candidate_pool and batch_result.all_clips:
-        candidate_pool = sorted(
-            batch_result.all_clips,
-            key=lambda c: c.score,
-            reverse=True,
-        )
+    if request.selected_clip_ids is not None:
+        if not request.selected_clip_ids:
+            raise HTTPException(status_code=422, detail="Select at least one clip to create a reel plan")
+        available_by_id = clips_by_id(batch_result.all_clips)
+        missing_ids = [clip_id for clip_id in request.selected_clip_ids if clip_id not in available_by_id]
+        if missing_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="One or more selected clip IDs do not belong to this analysis job. Refresh analysis and select the clips again.",
+            )
+        candidate_pool = [available_by_id[clip_id] for clip_id in request.selected_clip_ids]
+    else:
+        candidate_pool = [
+            clip
+            for clip in batch_result.all_clips
+            if clip.status
+            in (
+                SelectionStatus.SELECTED,
+                SelectionStatus.REJECTED_NOT_SELECTED,
+            )
+        ]
+        if not candidate_pool and batch_result.all_clips:
+            candidate_pool = sorted(
+                batch_result.all_clips,
+                key=lambda c: c.score,
+                reverse=True,
+            )
 
     template_image_path = _resolve_template_image(str(request.analysis_job_id))
-    template_seconds = TEMPLATE_DURATION_SECONDS if template_image_path is not None else 0.0
+    template_seconds = get_template_duration_seconds() if template_image_path is not None else 0.0
     if request.target_duration < template_seconds + END_CARD_DURATION:
         raise HTTPException(
             status_code=422,
@@ -374,11 +424,21 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
         target_duration=request.target_duration,
         min_clip_duration=request.min_clip_duration,
         max_clip_duration=request.max_clip_duration,
-        min_quality_score=request.min_quality_score,
+        min_quality_score=(
+            0.0 if request.selected_clip_ids is not None else request.min_quality_score
+        ),
         template_duration=template_seconds,
     )
 
     reel_plan = plan_reel(candidate_pool, config)
+
+    if request.selected_clip_ids is not None:
+        planned_clip_ids = {clip.clip_id for clip in reel_plan.clips}
+        if planned_clip_ids != set(request.selected_clip_ids):
+            raise HTTPException(
+                status_code=422,
+                detail="The selected clips do not fit the target duration. Choose fewer clips or increase the target duration.",
+            )
 
     # The editor should already show the real, currently-configured brand
     # identity before the user touches anything - pulled fresh from
@@ -429,17 +489,111 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
 
 @router.post(
     "/reels/generate",
-    response_model=ReelGenerateResponse,
+    response_model=ReelJobAcceptedResponse,
+    status_code=202,
 )
 def generate_reel(
     request: GenerateReelRequest,
+) -> ReelJobAcceptedResponse:
+    if request.request_id is not None:
+        existing_id = get_reel_job_by_request_id(str(request.request_id))
+        if existing_id is not None:
+            return ReelJobAcceptedResponse(reel_id=existing_id, status="queued")
+    if not _REEL_SLOTS.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Reel rendering is busy. Please try again shortly.")
+    reel_id = str(uuid.uuid4())
+    if not create_reel_job(reel_id, str(request.request_id) if request.request_id else None):
+        _REEL_SLOTS.release()
+        existing_id = get_reel_job_by_request_id(str(request.request_id))
+        return ReelJobAcceptedResponse(reel_id=existing_id, status="queued")
+    try:
+        _REEL_EXECUTOR.submit(_run_reel_job, request, reel_id)
+    except Exception as exc:
+        update_reel_job(reel_id, status="failed", stage="failed", error="Reel rendering could not be queued.")
+        _REEL_SLOTS.release()
+        raise HTTPException(status_code=503, detail="Reel rendering is unavailable. Please try again.") from exc
+    return ReelJobAcceptedResponse(reel_id=reel_id, status="queued")
+
+
+def _run_reel_job(request: GenerateReelRequest, reel_id: str) -> None:
+    try:
+        set_render_deadline(time.monotonic() + _REEL_JOB_TIMEOUT_SECONDS)
+        update_reel_job(reel_id, status="processing", stage="preparing")
+        response = _generate_reel_blocking(request, reel_id)
+        update_reel_job(
+            reel_id,
+            status="completed",
+            stage="completed",
+            response=response.model_dump(mode="json"),
+            output_path=str(OUTPUTS_DIR / f"{reel_id}.mp4"),
+        )
+    except HTTPException as exc:
+        (OUTPUTS_DIR / f"{reel_id}.mp4").unlink(missing_ok=True)
+        update_reel_job(
+            reel_id,
+            status="failed",
+            stage="failed",
+            error=str(exc.detail),
+        )
+    except Exception:
+        logger.exception("Background reel job failed: %s", reel_id)
+        (OUTPUTS_DIR / f"{reel_id}.mp4").unlink(missing_ok=True)
+        update_reel_job(
+            reel_id,
+            status="failed",
+            stage="failed",
+            error="Reel rendering failed. Please try again.",
+        )
+    finally:
+        set_render_deadline(None)
+        _REEL_SLOTS.release()
+
+
+def _generate_reel_blocking(
+    request: GenerateReelRequest,
+    reel_id: str,
 ) -> ReelGenerateResponse:
 
-    reel_id = str(uuid.uuid4())
 
     source_dir = _resolve_source_dir(
         str(request.analysis_job_id) if request.analysis_job_id else None
     )
+
+    selected_generation_clips: list[BatchClip] | None = None
+    if request.selected_clip_ids is not None:
+        if not request.selected_clip_ids:
+            raise HTTPException(status_code=422, detail="Select at least one clip to generate a reel")
+        if request.reel_plan is None or request.analysis_job_id is None:
+            raise HTTPException(status_code=422, detail="Selected clip IDs require a reel plan and analysis job")
+        analysis_job = get_analysis_job(str(request.analysis_job_id))
+        if analysis_job is None:
+            raise HTTPException(status_code=404, detail="Analysis job not found")
+        if analysis_job.get("status") != "completed":
+            raise HTTPException(status_code=400, detail="Analysis job has not completed yet")
+        batch_result = analysis_job["result"]
+        ensure_analysis_clip_ids(str(request.analysis_job_id), batch_result)
+        available_by_id = clips_by_id(batch_result.all_clips)
+        if any(clip_id not in available_by_id for clip_id in request.selected_clip_ids):
+            raise HTTPException(status_code=422, detail="One or more selected clip IDs do not belong to this analysis job")
+        planned_ids = [clip.clip_id for clip in request.reel_plan.clips]
+        if (
+            any(clip_id is None for clip_id in planned_ids)
+            or len(planned_ids) != len(set(planned_ids))
+            or set(planned_ids) != set(request.selected_clip_ids)
+        ):
+            raise HTTPException(status_code=422, detail="The reel plan does not match the selected clip IDs")
+        selected_generation_clips = [available_by_id[clip_id] for clip_id in request.selected_clip_ids]
+        for planned_clip in request.reel_plan.clips:
+            source_clip = available_by_id[planned_clip.clip_id]
+            if (
+                planned_clip.source_file != source_clip.source_file
+                or abs(planned_clip.original_start - source_clip.start_time) > 1e-6
+                or abs(planned_clip.original_end - source_clip.end_time) > 1e-6
+                or planned_clip.score != source_clip.score
+                or planned_clip.planned_start < source_clip.start_time
+                or planned_clip.planned_end > source_clip.end_time
+            ):
+                raise HTTPException(status_code=422, detail="The reel plan contains clip metadata that does not match the analysis")
 
     template_image_path = _resolve_template_image(
         str(request.analysis_job_id) if request.analysis_job_id else None
@@ -447,7 +601,7 @@ def generate_reel(
 
     if request.reel_plan is not None:
         template_seconds = (
-            TEMPLATE_DURATION_SECONDS if template_image_path is not None else 0.0
+            get_template_duration_seconds() if template_image_path is not None else 0.0
         )
         if (
             template_seconds
@@ -501,9 +655,14 @@ def generate_reel(
 
     except ValueError as exc:
         logger.warning("Invalid reel request: %s", exc)
+        detail = (
+            str(exc)
+            if str(exc).startswith("Insufficient credits.")
+            else "Invalid reel request. Please check your input."
+        )
         raise HTTPException(
             status_code=400,
-            detail="Invalid reel request. Please check your input.",
+            detail=detail,
         ) from exc
 
 
@@ -512,6 +671,8 @@ def generate_reel(
     # ============================================================
 
     try:
+
+        update_reel_job(str(reel_id), stage="rendering")
 
         if request.reel_plan is not None:
 
@@ -525,7 +686,7 @@ def generate_reel(
             # below its target duration. Top up the plan (existing-clip
             # slack first, then extra candidates from the analysis pool)
             # before rendering, so this stays a single render pass.
-            candidate_pool = _get_candidate_pool(
+            candidate_pool = selected_generation_clips or _get_candidate_pool(
                 str(request.analysis_job_id) if request.analysis_job_id else None
             )
 
@@ -657,6 +818,7 @@ def generate_reel(
             detail="An unexpected error occurred while generating the reel.",
         ) from exc
     except HTTPException:
+        refund_credits(DEMO_USER_ID, REEL_GENERATION_COST)
         raise
 
     except Exception as exc:
@@ -690,6 +852,7 @@ def generate_reel(
     # GENERATION SUCCESS
     # ============================================================
 
+    update_reel_job(str(reel_id), stage="finalizing")
     response = ReelGenerateResponse(
     **result.model_dump(exclude={"output_path"}),
     reel_id=reel_id,
@@ -697,22 +860,16 @@ def generate_reel(
     download_url=f"/api/reels/{reel_id}/download",
 )
 
-    create_reel_job(
-    reel_id,
-    response.model_dump(),
-    str(output_path),
-)
-
     return response
 
 
 @router.get(
     "/reels/{reel_id}",
-    response_model=ReelGenerateResponse,
+    response_model=ReelJobStatusResponse,
 )
 def get_reel(
     reel_id: uuid.UUID,
-) -> ReelGenerateResponse:
+) -> ReelJobStatusResponse:
 
     reel_id = str(reel_id)
     job = get_reel_job(reel_id)
@@ -723,8 +880,24 @@ def get_reel(
             detail=f"Reel not found",
         )
 
-    return ReelGenerateResponse(
-        **job["response"]
+    return ReelJobStatusResponse(
+        reel_id=reel_id,
+        status=job["status"],
+        stage=job["stage"],
+        error=job.get("error"),
+        result=ReelGenerateResponse(**job["response"]) if job.get("response") else None,
+    )
+
+
+@router.post("/reels/import", status_code=410)
+def import_rendered_reel() -> None:
+    """Reject browser-rendered uploads until photo exports use server rendering and credits."""
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Browser-rendered reel imports are disabled. Photo Reel export will return "
+            "when photo slides can be rendered through the credit-accounted server pipeline."
+        ),
     )
 
 
@@ -734,20 +907,19 @@ def download_reel(
 ) -> FileResponse:
     reel_id = str(reel_id)
     job = get_reel_job(reel_id)
-
-    logger.info("Download requested for reel_id=%s", reel_id)
-    logger.info("Reel job found: %s", job is not None)
-
-    if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Reel not found",
+    if job is not None:
+        output_path = Path(job["output_path"]).resolve()
+        if not output_path.is_relative_to(OUTPUTS_DIR.resolve()):
+            logger.warning("Rejected reel output outside storage for reel_id=%s", reel_id)
+            raise HTTPException(status_code=404, detail="Reel file not found")
+    else:
+        # Reel metadata is held in the in-memory job store. Keep saved files
+        # playable after a backend restart by resolving only the UUID filename.
+        output_path = next(
+            (OUTPUTS_DIR / f"{reel_id}{suffix}" for suffix in (".mp4", ".webm")
+             if (OUTPUTS_DIR / f"{reel_id}{suffix}").is_file()),
+            OUTPUTS_DIR / f"{reel_id}.mp4",
         )
-
-    output_path = Path(job["output_path"])
-
-    logger.info("Download path: %s", output_path.resolve())
-    logger.info("Download file exists: %s", output_path.is_file())
 
     if not output_path.is_file():
         logger.warning(
@@ -761,6 +933,6 @@ def download_reel(
 
     return FileResponse(
         path=output_path,
-        media_type="video/mp4",
+        media_type="video/webm" if output_path.suffix.lower() == ".webm" else "video/mp4",
         filename=output_path.name,
     )

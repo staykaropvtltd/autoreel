@@ -9,6 +9,19 @@ import {
   startAnalysis,
   uploadVideos,
 } from "./api";
+import { pollAnalysisUntilTerminal } from "./analysisPolling";
+import { assertPlanMatchesSelection } from "./clipSelection";
+import { getCreditGate } from "./creditAvailability";
+import { useCreditQuote } from "./hooks/useCreditQuote";
+import {
+  hashForScreen,
+  canRestoreWorkflowRoute,
+  isWorkflowRoute,
+  parseAppHash,
+  safeReturnDestination,
+  signInDestinationFor,
+  signInHash,
+} from "./appRouting";
 
 import {
   FALLBACK_BRANDING,
@@ -92,15 +105,24 @@ const EMPTY_PRODUCT: ProductInfo = {
 };
 
 
-const POLL_INTERVAL_MS = 1000;
 const DEFAULT_TARGET_DURATION = 15;
+const WORKFLOW_RECOVERY_MESSAGE = "This workflow step is no longer available after navigation or refresh. Return to Studio to start or continue with current data.";
 
 
 export default function App() {
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { theme } = useTheme();
 
-  const [screen, setScreen] = useState<Screen>("landing");
+  const [screen, setScreenState] = useState<Screen>("landing");
+  const setScreen = (next: Screen, replace = false) => {
+    const nextHash = hashForScreen(next);
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+    if (currentUrl !== nextUrl) {
+      window.history[replace ? "replaceState" : "pushState"](null, "", nextUrl);
+    }
+    setScreenState(next);
+  };
 
   const [files, setFiles] = useState<File[]>([]);
   const [product, setProduct] =
@@ -153,8 +175,11 @@ export default function App() {
   const [error, setError] =
     useState<string | null>(null);
 
-  const pollTimer =
-    useRef<number | null>(null);
+  const creditQuote = useCreditQuote(["dashboard", "plan", "editor", "generating"].includes(screen));
+
+  const analysisController = useRef<AbortController | null>(null);
+  const analysisRunning = useRef(false);
+  const generationRunning = useRef(false);
 
   const planRequestId =
     useRef(0);
@@ -278,13 +303,13 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      if (pollTimer.current) {
-        window.clearTimeout(
-          pollTimer.current
-        );
-      }
+      analysisController.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (screen !== "analyzing") analysisController.current?.abort();
+  }, [screen]);
 
 
   /* =========================================================
@@ -293,44 +318,63 @@ export default function App() {
 
   useEffect(() => {
     const handleRoute = () => {
-      const hash =
-        window.location.hash;
-
-      if (
-        hash === "#signin" ||
-        hash === "#/signin"
-      ) {
-        setScreen("signin");
-      } else if (
-        hash === "#signup" ||
-        hash === "#/signup"
-      ) {
-        setScreen("signup");
-      } else if (
-        hash === "#studio"
-      ) {
-        setScreen("upload");
-      } else if (
-        hash === "#dashboard" ||
-        hash === "#/dashboard"
-      ) {
-        setScreen("dashboard");
+      const route = parseAppHash(window.location.hash);
+      if (route.type === "landing") {
+        setScreenState("landing");
+        return;
       }
+      if (route.type === "unknown") {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        setScreenState("landing");
+        setError("That page could not be found. You are back at the home page.");
+        return;
+      }
+      if (authLoading) return;
+      if (route.type === "auth") {
+        if (isAuthenticated) {
+          if (route.workflowRecovery) setError(WORKFLOW_RECOVERY_MESSAGE);
+          setScreen(route.returnTo === "studio" ? "upload" : "dashboard", true);
+        } else {
+          setScreenState(route.mode);
+        }
+        return;
+      }
+      if (!isAuthenticated) {
+        const destination = signInDestinationFor(route);
+        if (!destination) return;
+        window.history.replaceState(null, "", window.location.pathname + window.location.search + signInHash(destination, isWorkflowRoute(route.destination)));
+        setScreenState("signin");
+        return;
+      }
+
+      const requested = route.destination;
+      if (requested === "generating" && reel && reelPlan) {
+        setScreen("editor", true);
+        return;
+      }
+      const workflowAvailable = !isWorkflowRoute(requested) || canRestoreWorkflowRoute(requested, {
+        analysisRunning: analysisRunning.current,
+        generationRunning: generationRunning.current,
+        hasAnalysis: !!analysisJobId && !!analysisSummary,
+        hasPlan: !!analysisJobId && !!reelPlan && planClips.length > 0,
+        hasGeneratedReel: !!reel,
+      });
+      if (isWorkflowRoute(requested) && !workflowAvailable) {
+        setError(WORKFLOW_RECOVERY_MESSAGE);
+        setScreen("upload", true);
+        return;
+      }
+      setScreen(requested === "dashboard" ? "dashboard" : requested === "studio" ? "upload" : requested, true);
     };
 
     handleRoute();
-
-    window.addEventListener(
-      "hashchange",
-      handleRoute
-    );
-
-    return () =>
-      window.removeEventListener(
-        "hashchange",
-        handleRoute
-      );
-  }, []);
+    window.addEventListener("hashchange", handleRoute);
+    window.addEventListener("popstate", handleRoute);
+    return () => {
+      window.removeEventListener("hashchange", handleRoute);
+      window.removeEventListener("popstate", handleRoute);
+    };
+  }, [authLoading, isAuthenticated, analysisJobId, analysisSummary, reelPlan, planClips.length, reel]);
 
 
   /* =========================================================
@@ -338,11 +382,12 @@ export default function App() {
      ========================================================= */
 
   const navigateToAuth = (
-    mode: "signin" | "signup"
+    mode: "signin" | "signup",
+    returnTo?: "dashboard" | "studio",
   ) => {
-    window.location.hash = `#${mode}`;
-
-    setScreen(mode);
+    const nextHash = returnTo && mode === "signin" ? signInHash(returnTo) : `#${mode}`;
+    window.history.pushState(null, "", window.location.pathname + window.location.search + nextHash);
+    setScreenState(mode);
 
     window.scrollTo({
       top: 0,
@@ -352,9 +397,10 @@ export default function App() {
 
 
   const navigateToDashboard = () => {
-    window.location.hash =
-      "#dashboard";
-
+    if (!isAuthenticated) {
+      navigateToAuth("signin", "dashboard");
+      return;
+    }
     setScreen("dashboard");
 
     window.scrollTo({
@@ -365,13 +411,8 @@ export default function App() {
 
 
   const backToHome = () => {
-    window.history.pushState(
-      null,
-      "",
-      window.location.pathname
-    );
-
-    setScreen("landing");
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    setScreenState("landing");
 
     window.scrollTo({
       top: 0,
@@ -479,64 +520,28 @@ export default function App() {
      ANALYSIS POLLING
      ========================================================= */
 
-  const pollAnalysis = (
-    jobId: string
-  ) => {
-    getAnalysis(jobId)
-      .then((result) => {
-        setAnalysisStage(
-          normalizeAnalysisStage(
-            result.stage
-          )
-        );
-
-        if (
-          result.status ===
-          "completed"
-        ) {
-          setAnalysisSummary(
-            result
-          );
-
-          setClips(
-            result.clips ?? []
-          );
-
-          setScreen("review");
-
-          return;
-        }
-
-        if (
-          result.status ===
-          "failed"
-        ) {
-          setError(
-            result.error ??
-              "Analysis failed"
-          );
-
-          setScreen("upload");
-
-          return;
-        }
-
-        pollTimer.current =
-          window.setTimeout(
-            () =>
-              pollAnalysis(
-                jobId
-              ),
-            POLL_INTERVAL_MS
-          );
-      })
-      .catch(() => {
-        setError(
-          "Lost connection to the backend while analyzing."
-        );
-
-        setScreen("upload");
+  const pollAnalysis = async (jobId: string, controller: AbortController) => {
+    try {
+      const result = await pollAnalysisUntilTerminal(jobId, controller.signal, getAnalysis, {
+        onProgress: (progress) => setAnalysisStage(normalizeAnalysisStage(progress.stage)),
       });
+      setAnalysisSummary(result);
+      setClips(result.clips);
+      if (result.clips.length === 0) {
+        setError("Analysis completed, but no usable clips were found. Try different footage and analyze again.");
+      }
+      setScreen("review");
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const isAxiosError = typeof err === "object" && err !== null &&
+        "isAxiosError" in err && err.isAxiosError === true;
+      setError(isAxiosError
+        ? axiosErrorMessage(err)
+        : err instanceof Error
+          ? err.message
+          : apiErrorMessage(err, "Analysis failed or timed out. Please try again."));
+      setScreen("upload");
+    }
   };
 
 
@@ -548,6 +553,10 @@ export default function App() {
   useDemo: boolean,
   templateId?: string | null
 ) => {
+    if (analysisRunning.current) return;
+    analysisRunning.current = true;
+    const controller = new AbortController();
+    analysisController.current = controller;
     setError(null);
 
     setScreen("analyzing");
@@ -568,16 +577,15 @@ export default function App() {
 
         const uploadResult =
           await uploadVideos(
-            files
+            files,
+            controller.signal,
           );
 
         jobId =
           uploadResult.job_id;
       }
 
-    const {
-  job_id,
-} = await startAnalysis(
+      const startResult = await startAnalysis(
   useDemo
     ? {
         use_demo: true,
@@ -585,20 +593,23 @@ export default function App() {
     : {
         job_id: jobId,
         template_id: templateId || undefined,
+      }, controller.signal);
+
+      if (typeof startResult?.job_id !== "string" || !startResult.job_id.trim()) {
+        throw new Error("The server did not return an analysis job ID. Please try again.");
       }
-);
-
-      setAnalysisJobId(
-        job_id
-      );
-
-      pollAnalysis(job_id);
+      setAnalysisJobId(startResult.job_id);
+      await pollAnalysis(startResult.job_id, controller);
     } catch (err) {
+      if (controller.signal.aborted) return;
       setError(
         axiosErrorMessage(err)
       );
 
       setScreen("upload");
+    } finally {
+      analysisRunning.current = false;
+      if (analysisController.current === controller) analysisController.current = null;
     }
   };
 
@@ -607,18 +618,15 @@ export default function App() {
      CLIP SELECTION
      ========================================================= */
 
-  const toggleClip = (
-    index: number
-  ) => {
+  const toggleClip = (clipId: string) => {
     setClips((prev) =>
-      prev.map((c, i) =>
-        i === index
+      prev.map((clip) =>
+        clip.clip_id === clipId
           ? {
-              ...c,
-              selected:
-                !c.selected,
+              ...clip,
+              selected: !clip.selected,
             }
-          : c
+          : clip
       )
     );
   };
@@ -646,22 +654,35 @@ export default function App() {
      REVIEW → PLAN
      ========================================================= */
 
-const handleContinueToPlan = () => {
-  if (!reelPlan) return;
+const handleContinueToPlan = async () => {
+  if (!analysisJobId) return;
+  const selectedClipIds = clips.filter((clip) => clip.selected).map((clip) => clip.clip_id);
+  if (selectedClipIds.length === 0) {
+    setError("Select at least one clip before continuing to the reel plan.");
+    return;
+  }
 
-const selectedClips = clips.filter((clip) => clip.selected);
-
-const selectedPlanClips = reelPlan.clips.filter((planClip) =>
-  selectedClips.some(
-    (selectedClip) =>
-      selectedClip.source_file === planClip.source_file
-  )
-);
-
-  setPlanClips(selectedPlanClips);
-
+  const requestId = ++planRequestId.current;
+  setPlanLoading(true);
   setError(null);
-  setScreen("plan");
+  try {
+    const selectedPlan = await planReel({
+      analysis_job_id: analysisJobId,
+      selected_clip_ids: selectedClipIds,
+      target_duration: targetDuration,
+    });
+    assertPlanMatchesSelection(selectedClipIds, selectedPlan.clips);
+    if (planRequestId.current !== requestId) return;
+    setReelPlan(selectedPlan);
+    setPlanClips(selectedPlan.clips);
+    setScreen("plan");
+  } catch (requestError) {
+    if (planRequestId.current === requestId) {
+      setError(apiErrorMessage(requestError, "Could not plan the selected clips. Adjust your selection or target duration and try again."));
+    }
+  } finally {
+    if (planRequestId.current === requestId) setPlanLoading(false);
+  }
 };
 
 
@@ -726,7 +747,21 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         return;
       }
 
+      if (generationRunning.current) return;
+      const creditGate = getCreditGate(
+        creditQuote.credits,
+        creditQuote.cost,
+        creditQuote.loading,
+        creditQuote.error,
+      );
+      if (!creditGate.allowed) {
+        setError(creditGate.message);
+        return;
+      }
+      generationRunning.current = true;
+
       setError(null);
+      setGenerating(true);
 
       setScreen(
         "generating"
@@ -812,6 +847,13 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
 
             analysis_job_id:
               analysisJobId,
+            selected_clip_ids: finalPlan.clips.map((clip) => clip.clip_id),
+          }, (stage) => {
+            setGenerationStage(
+              stage === "queued" ? "preparing"
+                : stage === "finalizing" || stage === "completed" ? "complete"
+                  : stage,
+            );
           });
 
         setGenerationStage(
@@ -929,6 +971,10 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         );
 
         setScreen("plan");
+      } finally {
+        await creditQuote.refresh();
+        generationRunning.current = false;
+        setGenerating(false);
       }
     };
 
@@ -947,6 +993,19 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         return;
       }
 
+      if (generationRunning.current) return;
+      const creditGate = getCreditGate(
+        creditQuote.credits,
+        creditQuote.cost,
+        creditQuote.loading,
+        creditQuote.error,
+      );
+      if (!creditGate.allowed) {
+        setError(creditGate.message);
+        return;
+      }
+      generationRunning.current = true;
+
       setError(null);
 
       setGenerating(true);
@@ -959,6 +1018,13 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
 
             analysis_job_id:
               analysisJobId,
+            selected_clip_ids: reelPlan.clips.map((clip) => clip.clip_id),
+          }, (stage) => {
+            setGenerationStage(
+              stage === "queued" ? "preparing"
+                : stage === "finalizing" || stage === "completed" ? "complete"
+                  : stage,
+            );
           });
 
         setReel(result);
@@ -967,6 +1033,8 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
           axiosErrorMessage(err)
         );
       } finally {
+        await creditQuote.refresh();
+        generationRunning.current = false;
         setGenerating(false);
       }
     };
@@ -1013,7 +1081,11 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
         initialMode={screen}
 
         onSuccess={() => {
-          navigateToDashboard();
+          const authRoute = parseAppHash(window.location.hash);
+          const returnTo = authRoute.type === "auth" ? safeReturnDestination(new URLSearchParams(window.location.hash.split("?")[1] || "").get("returnTo")) : null;
+          if (authRoute.type === "auth" && authRoute.workflowRecovery) setError(WORKFLOW_RECOVERY_MESSAGE);
+          if (returnTo === "studio") setScreen("upload");
+          else navigateToDashboard();
         }}
 
         onBackToHome={
@@ -1060,9 +1132,6 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
             }));
           }
 
-          window.location.hash =
-            "#studio";
-
           setScreen("upload");
         }}
 
@@ -1075,15 +1144,11 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
             ? async () => {
                 resetToUpload();
 
-                window.location.hash =
-                  "#studio";
-
-                setScreen(
-                  "upload"
-                );
+                setScreen("upload");
               }
             : undefined
         }
+        creditQuote={creditQuote}
       />
     );
   }
@@ -1314,6 +1379,12 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
   durationStatus={reelPlan.duration_status}
   clips={planClips}
   files={files}
+  credits={creditQuote.credits}
+  reelCost={creditQuote.cost}
+  creditsLoading={creditQuote.loading}
+  creditsError={creditQuote.error}
+  canGenerate={creditQuote.canGenerate}
+  onRetryCredits={() => void creditQuote.refresh()}
   onRemove={removePlanClip}
   onMoveUp={(i) => movePlanClip(i, -1)}
   onMoveDown={(i) => movePlanClip(i, 1)}
@@ -1382,6 +1453,13 @@ const selectedPlanClips = reelPlan.clips.filter((planClip) =>
                   generating={
                     generating
                   }
+
+                  credits={creditQuote.credits}
+                  reelCost={creditQuote.cost}
+                  creditsLoading={creditQuote.loading}
+                  creditsError={creditQuote.error}
+                  canGenerate={creditQuote.canGenerate}
+                  onRetryCredits={() => void creditQuote.refresh()}
 
                   error={
                     error

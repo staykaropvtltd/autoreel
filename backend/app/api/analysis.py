@@ -18,6 +18,7 @@ from app.core.job_store import (
 )
 from app.core.config import get_settings
 from app.services.batch_selector import select_best_clips
+from app.services.clip_identity import ensure_analysis_clip_ids
 from app.services.clip_selector import analyze_video
 from app.api.templates import TEMPLATE_IMAGES_DIR
 from app.core.security import safe_filename
@@ -147,6 +148,7 @@ def _run_analysis_job(
 
         update_analysis_job(job_id, stage="selecting_clips")
         batch_result = select_best_clips(per_video_results)
+        ensure_analysis_clip_ids(job_id, batch_result)
 
         update_analysis_job(
             job_id,
@@ -234,15 +236,14 @@ def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -
 
     analysis_job_id = str(uuid.uuid4())
 
-    create_analysis_job(
-    analysis_job_id,
-    source_dir=source_dir,
-)
-
-    update_analysis_job(
-    analysis_job_id,
-    template_id=str(request.template_id) if request.template_id else None,
-)
+    try:
+        create_analysis_job(
+            analysis_job_id,
+            source_dir=source_dir,
+            template_id=str(request.template_id) if request.template_id else None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Template not found") from exc
 
     background_tasks.add_task(
     _run_analysis_job,
@@ -276,6 +277,7 @@ def get_analysis(job_id: uuid.UUID) -> AnalysisStatusResponse:
         )
 
     batch_result = job["result"]
+    ensure_analysis_clip_ids(job_id, batch_result)
     per_video_results = job["per_video_results"]
     total_processing_time = round(
         sum(r.processing_time_seconds for r in per_video_results) + batch_result.processing_time_seconds, 3

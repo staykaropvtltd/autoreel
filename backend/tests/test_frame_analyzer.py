@@ -1,11 +1,14 @@
 from pathlib import Path
 
+import cv2
 import numpy as np
+import pytest
 
 from app.schemas.analysis import VideoSegment
 from app.services.frame_analyzer import (
     analyze_segment,
     compute_average_hash,
+    normalize_gray_frame,
     sample_timestamps,
 )
 
@@ -28,6 +31,20 @@ def test_compute_average_hash_identical_frames_match():
     frame = np.full((100, 100), 128, dtype=np.uint8)
 
     assert compute_average_hash(frame) == compute_average_hash(frame.copy())
+
+
+def test_normalized_sharpness_is_consistent_across_source_resolutions():
+    base = np.zeros((360, 640), dtype=np.uint8)
+    base[:, ::8] = 255
+    high_resolution = cv2.resize(base, (1280, 720), interpolation=cv2.INTER_NEAREST)
+
+    normalized_base = normalize_gray_frame(base)
+    normalized_high = normalize_gray_frame(high_resolution)
+
+    assert normalized_base.shape == normalized_high.shape
+    assert cv2.Laplacian(normalized_base, cv2.CV_64F).var() == pytest.approx(
+        cv2.Laplacian(normalized_high, cv2.CV_64F).var(), rel=0.05
+    )
 
 
 def test_compute_average_hash_distinguishes_different_patterns():

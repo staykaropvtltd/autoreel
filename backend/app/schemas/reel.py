@@ -46,3 +46,16 @@ class ReelGenerateResponse(BaseModel):
     processing_time_seconds: float
     target_duration: float | None = None
     duration_status: Literal["ok", "insufficient_content"] = "ok"
+
+
+class ReelJobAcceptedResponse(BaseModel):
+    reel_id: uuid.UUID
+    status: Literal["queued"]
+
+
+class ReelJobStatusResponse(BaseModel):
+    reel_id: uuid.UUID
+    status: Literal["queued", "processing", "completed", "failed"]
+    stage: Literal["queued", "preparing", "rendering", "finalizing", "completed", "failed"]
+    error: str | None = None
+    result: ReelGenerateResponse | None = None

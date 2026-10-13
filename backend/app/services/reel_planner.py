@@ -58,15 +58,15 @@ from app.services.similarity_analyzer import hamming_distance
 
 DURATION_TOLERANCE_SECONDS = 0.1
 
-QUALITY_WEIGHT = 0.40
-DIVERSITY_WEIGHT = 0.25
-STORY_WEIGHT = 0.20
-DURATION_FIT_WEIGHT = 0.15
+QUALITY_WEIGHT = 0.45
+DIVERSITY_WEIGHT = 0.30
+STORY_WEIGHT = 0.05
+DURATION_FIT_WEIGHT = 0.20
 
 HASH_BITS = 64
 
 DEFAULT_TARGET_DURATION = 15.0
-DEFAULT_MIN_CLIP_DURATION = 1.0
+DEFAULT_MIN_CLIP_DURATION = 0.5
 DEFAULT_MAX_CLIP_DURATION = 8.0
 DEFAULT_MIN_QUALITY_SCORE = 50.0
 
@@ -224,6 +224,7 @@ def plan_reel(candidates: list[BatchClip], config: PlanningConfig | None = None)
 
         selected.append(
             PlannedReelClip(
+                clip_id=best_candidate.clip_id,
                 position=position,
                 source_file=best_candidate.source_file,
                 original_start=best_candidate.start_time,

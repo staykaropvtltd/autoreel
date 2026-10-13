@@ -24,7 +24,7 @@ from app.services.product_end_card import (
     build_product_end_card_video,
     create_product_end_card,
 )
-from app.services.reel_duration import TEMPLATE_DURATION_SECONDS
+from app.services.reel_duration import get_template_duration_seconds
 
 from app.schemas.reel import PlannedClip, ReelResult
 from app.schemas.story import (
@@ -413,7 +413,6 @@ def render_final_overlay(
     target_duration: float,
     music: MusicSelection | None = None,
     music_file_path: Path | None = None,
-    template_image_path: Path | None = None,
     target_width: int = DEFAULT_TARGET_WIDTH,
     target_height: int = DEFAULT_TARGET_HEIGHT,
     logo_size: int = 120,
@@ -421,14 +420,13 @@ def render_final_overlay(
 ) -> None:
     """Phase 9 final overlay pass.
 
-    Applies the optional template image, logo, timed text overlays and music
-    to the concatenated intermediate Reel.
+    Applies the optional logo, timed text overlays, and music to the
+    concatenated timeline. The opening template is already a timeline segment.
     """
     args = ["-i", str(intermediate_path)]
     next_input_index = 1
     music_index = None
     logo_index = None
-    template_index = None
 
     # ---------------------------------------------------------------
     # MUSIC INPUT
@@ -470,25 +468,6 @@ def render_final_overlay(
             ]
 
             logo_index = next_input_index
-            next_input_index += 1
-
-    # ---------------------------------------------------------------
-    # TEMPLATE IMAGE INPUT
-    # ---------------------------------------------------------------
-    if template_image_path is not None:
-        template_image_path = Path(template_image_path)
-
-        if template_image_path.exists():
-            args += [
-                "-loop",
-                "1",
-                "-framerate",
-                str(DEFAULT_FPS),
-                "-i",
-                str(template_image_path),
-            ]
-
-            template_index = next_input_index
             next_input_index += 1
 
     filter_parts = []
@@ -765,7 +744,7 @@ def compose_reel_from_editor_plan(
                         "-i",
                         "anullsrc=channel_layout=stereo:sample_rate=44100",
                         "-t",
-                        f"{TEMPLATE_DURATION_SECONDS:.3f}",
+                        f"{get_template_duration_seconds():.3f}",
                         "-vf",
                         (
                             f"scale={target_width}:{target_height}:"
@@ -791,7 +770,7 @@ def compose_reel_from_editor_plan(
                         "-b:a",
                         "128k",
                         "-t",
-                        f"{TEMPLATE_DURATION_SECONDS:.3f}",
+                        f"{get_template_duration_seconds():.3f}",
                         str(template_intro_path),
                     ]
                 )
@@ -1127,7 +1106,6 @@ def compose_reel_from_editor_plan(
             final_render_duration,
             music=music_selection,
             music_file_path=music_file_path,
-            template_image_path=template_path,
             target_width=target_width,
             target_height=target_height,
             logo_size=reel_plan.branding.logo_size,

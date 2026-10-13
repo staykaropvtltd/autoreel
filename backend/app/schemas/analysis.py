@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 
 class VideoSegment(BaseModel):
@@ -32,6 +32,7 @@ class AnalyzedClip(BaseModel):
     score: ClipScore
     accepted: bool
     perceptual_hash: str
+    _perceptual_hashes: tuple[int, ...] = PrivateAttr(default=())
 
 
 class AnalysisResult(BaseModel):

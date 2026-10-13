@@ -33,7 +33,7 @@ from pathlib import Path
 from app.schemas.analysis import AnalysisResult, AnalyzedClip
 from app.schemas.batch import BatchAnalysisResult, BatchClip, SelectionStatus
 from app.services.clip_selector import analyze_video
-from app.services.similarity_analyzer import hamming_distance
+from app.services.similarity_analyzer import _BKTree, _hash_sequence, signature_distance
 
 DEFAULT_MIN_SCORE = 60.0
 DEFAULT_DUPLICATE_DISTANCE_THRESHOLD = 5
@@ -53,7 +53,8 @@ class BatchSelectionConfig:
     max_total_duration: float = DEFAULT_MAX_TOTAL_DURATION
 
 
-_Candidate = tuple[AnalyzedClip, int]
+_Signature = tuple[int, ...]
+_Candidate = tuple[AnalyzedClip, _Signature]
 
 
 def clip_key(source_file: str, start_time: float) -> str:
@@ -67,7 +68,7 @@ def _to_batch_clip(
     duplicate_of: str | None = None,
     closest_neighbor_distance: int | None = None,
 ) -> BatchClip:
-    return BatchClip(
+    batch_clip = BatchClip(
         source_file=clip.segment.source_file,
         start_time=clip.segment.start_time,
         end_time=clip.segment.end_time,
@@ -82,14 +83,16 @@ def _to_batch_clip(
         duplicate_of=duplicate_of,
         closest_neighbor_distance=closest_neighbor_distance,
     )
+    batch_clip._perceptual_hashes = clip._perceptual_hashes or (int(clip.perceptual_hash, 16),)
+    return batch_clip
 
 
 def aggregate_clips(analyzed_videos: list[AnalysisResult]) -> list[_Candidate]:
     """Flattens clips from multiple per-video Phase 3 results into one list,
-    pairing each clip with its perceptual hash as an int for comparison.
+    pairing each clip with its representative-frame signature for comparison.
     """
     return [
-        (clip, int(clip.perceptual_hash, 16))
+        (clip, clip._perceptual_hashes or (int(clip.perceptual_hash, 16),))
         for video_result in analyzed_videos
         for clip in video_result.clips
     ]
@@ -98,14 +101,23 @@ def aggregate_clips(analyzed_videos: list[AnalysisResult]) -> list[_Candidate]:
 def _nearest_neighbor_distances(candidates: list[_Candidate]) -> dict[str, int]:
     distances: dict[str, int] = {}
     n = len(candidates)
+    tree = _BKTree(signature for _, signature in candidates)
+    signature_counts: dict[_Signature, int] = {}
+    for _, signature in candidates:
+        signature_counts[signature] = signature_counts.get(signature, 0) + 1
     for i in range(n):
         clip_i, hash_i = candidates[i]
         if n <= 1:
             continue
-        min_distance = min(
-            hamming_distance(hash_i, candidates[j][1]) for j in range(n) if j != i
-        )
-        distances[clip_key(clip_i.segment.source_file, clip_i.segment.start_time)] = min_distance
+        radius = min(64 * len(hash_i), 8)
+        nearby = tree.within(hash_i, radius)
+        while not any(other != hash_i or signature_counts[hash_i] > 1 for other in nearby) and radius < 64 * len(hash_i):
+            radius = min(radius * 2, 64 * len(hash_i))
+            nearby = tree.within(hash_i, radius)
+        other_distances = [signature_distance(hash_i, other) for other in nearby
+                           if other != hash_i or signature_counts[hash_i] > 1]
+        min_distance = min(other_distances, default=64.0)
+        distances[clip_key(clip_i.segment.source_file, clip_i.segment.start_time)] = round(min_distance)
     return distances
 
 
@@ -138,14 +150,14 @@ def remove_cross_file_duplicates(
     sorted_candidates = sorted(candidates, key=lambda pair: pair[0].score.score, reverse=True)
     kept: list[_Candidate] = []
     rejected: list[BatchClip] = []
+    tree = _BKTree()
 
     for clip, hash_int in sorted_candidates:
-        match = next(
-            (k for k in kept if hamming_distance(hash_int, k[1]) <= duplicate_distance_threshold),
-            None,
-        )
+        nearby = tree.within(hash_int, duplicate_distance_threshold * len(_hash_sequence(hash_int)))
+        match = next((k for k in kept if _hash_sequence(k[1]) in nearby), None)
         if match is None:
             kept.append((clip, hash_int))
+            tree.add(hash_int)
             continue
 
         kept_clip, kept_hash = match
@@ -155,7 +167,7 @@ def remove_cross_file_duplicates(
                 SelectionStatus.REJECTED_DUPLICATE,
                 selected=False,
                 duplicate_of=clip_key(kept_clip.segment.source_file, kept_clip.segment.start_time),
-                closest_neighbor_distance=hamming_distance(hash_int, kept_hash),
+                closest_neighbor_distance=round(signature_distance(hash_int, kept_hash)),
             )
         )
 
@@ -187,7 +199,7 @@ def select_diverse_clips(
             deferred.append((clip, hash_int))
             continue
         is_redundant = any(
-            hamming_distance(hash_int, s_hash) <= config.diversity_distance_threshold
+            signature_distance(hash_int, s_hash) <= config.diversity_distance_threshold
             for _, s_hash in selected
         )
         if is_redundant:

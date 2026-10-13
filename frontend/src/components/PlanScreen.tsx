@@ -9,6 +9,7 @@ import type {
   PlannedReelClip,
   ShotRole,
 } from "../types";
+import CreditQuoteNotice from "./CreditQuoteNotice";
 
 interface PlanScreenProps {
   targetDuration: number;
@@ -20,6 +21,12 @@ interface PlanScreenProps {
   durationStatus: string;
   clips: PlannedReelClip[];
   files: File[];
+  credits: number | null;
+  reelCost: number | null;
+  creditsLoading: boolean;
+  creditsError: string | null;
+  canGenerate: boolean;
+  onRetryCredits: () => void;
   onRemove: (index: number) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
@@ -52,6 +59,12 @@ export default function PlanScreen({
   durationStatus,
   clips,
   files,
+  credits,
+  reelCost,
+  creditsLoading,
+  creditsError,
+  canGenerate,
+  onRetryCredits,
   onRemove,
   onMoveUp,
   onMoveDown,
@@ -308,7 +321,7 @@ export default function PlanScreen({
 
           return (
             <li
-              key={`${clip.source_file}-${clip.original_start}-${i}`}
+              key={clip.clip_id}
               className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
             >
               {/* Clip Number */}
@@ -397,6 +410,15 @@ export default function PlanScreen({
         </p>
       )}
 
+      <CreditQuoteNotice
+        credits={credits}
+        cost={reelCost}
+        loading={creditsLoading}
+        error={creditsError}
+        canGenerate={canGenerate}
+        onRetry={onRetryCredits}
+      />
+
       {/* Bottom Buttons */}
       <div className="flex gap-3">
         <button
@@ -410,7 +432,7 @@ export default function PlanScreen({
         <button
           type="button"
           onClick={onGenerate}
-          disabled={clips.length === 0}
+          disabled={clips.length === 0 || !canGenerate}
           className="flex-1 rounded-md bg-[var(--color-brand-primary)] disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-secondary)] text-white font-medium py-2.5 hover:opacity-90 transition-opacity"
         >
           Generate Reel

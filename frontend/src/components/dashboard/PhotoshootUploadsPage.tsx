@@ -29,18 +29,24 @@ import {
 } from "lucide-react";
 import {
   apiErrorMessage,
+  deleteTemplateImage,
   generateReel,
   getAnalysis,
   getDemoStatus,
   listMusic,
   musicPreviewUrl,
   planReel,
-  reelFileUrl,
   startAnalysis,
+  uploadTemplateImage,
   uploadMusic,
   uploadVideos,
-  getCredits,
 } from "../../api";
+import { pollAnalysisUntilTerminal } from "../../analysisPolling";
+import { getCreditGate } from "../../creditAvailability";
+import { buildAnalysisStartPayload, isSameTemplateImage, validateTemplateImage } from "../../templateSelection";
+import { createSavedReelProject, type SavedReelProject } from "../../savedReels";
+import { assertPlanMatchesSelection, selectedClipsById } from "../../clipSelection";
+import CreditQuoteNotice from "../CreditQuoteNotice";
 import "./PhotoshootUploadsPage.css";
 import type {
   ClipData,
@@ -235,6 +241,12 @@ type MoodFilter = (typeof MOOD_FILTERS)[number];
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 interface PhotoshootUploadsPageProps {
+  credits: number | null;
+  reelCost: number | null;
+  creditsLoading: boolean;
+  creditsError: string | null;
+  canGenerate: boolean;
+  onRefreshCredits: () => Promise<void>;
   onBackToLibrary: () => void;
   onOpenInEditor?: (projectData: {
     title: string;
@@ -243,19 +255,7 @@ interface PhotoshootUploadsPageProps {
     overlays?: any;
     audio?: any;
   }) => void;
-  onAddToLibrary?: (savedProject: {
-    id: string;
-    title: string;
-    category: string;
-    durationSeconds: number;
-    resolution: string;
-    videoUrl: string;
-    thumbnailUrl: string;
-    createdAt: string;
-    viewsCount: string;
-    status: "ready";
-    productPrice: string;
-  }) => void;
+  onAddToLibrary?: (savedProject: SavedReelProject) => void;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -263,6 +263,12 @@ interface PhotoshootUploadsPageProps {
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 export default function PhotoshootUploadsPage({
+  credits,
+  reelCost,
+  creditsLoading,
+  creditsError,
+  canGenerate,
+  onRefreshCredits,
   onBackToLibrary: _onBackToLibrary,
   onOpenInEditor,
   onAddToLibrary,
@@ -273,13 +279,57 @@ export default function PhotoshootUploadsPage({
 
   /* ── Uploaded video/photo assets ── */
   const [files, setFiles] = useState<File[]>([]);
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [templatePreviewUrl, setTemplatePreviewUrl] = useState<string | null>(null);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
+  const templateInputRef = useRef<HTMLInputElement | null>(null);
+  const templatePreviewUrlRef = useRef<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [analyzedClips, setAnalyzedClips] = useState<ClipData[]>([]);
   const [previewClipIndex, setPreviewClipIndex] = useState<number | null>(null);
 const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
-  const [selectedClipIndexes, setSelectedClipIndexes] = useState<number[]>([]);
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]);
   const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  const analysisControllerRef = useRef<AbortController | null>(null);
+  const analysisRunningRef = useRef(false);
+  const generationRunningRef = useRef(false);
+
+  useEffect(() => () => analysisControllerRef.current?.abort(), []);
+
+  useEffect(() => () => {
+    if (templatePreviewUrlRef.current) URL.revokeObjectURL(templatePreviewUrlRef.current);
+  }, []);
+
+  const selectTemplateImage = (file: File | null) => {
+    if (analysisRunningRef.current || generationRunningRef.current) return;
+    if (isSameTemplateImage(templateFile, file)) return;
+    if (file) {
+      const validationMessage = validateTemplateImage(file);
+      if (validationMessage) {
+        setError(validationMessage);
+        return;
+      }
+    }
+    if (templateId) void deleteTemplateImage(templateId).catch(() => {});
+    if (templatePreviewUrlRef.current) URL.revokeObjectURL(templatePreviewUrlRef.current);
+    const nextPreviewUrl = file ? URL.createObjectURL(file) : null;
+    templatePreviewUrlRef.current = nextPreviewUrl;
+    setTemplatePreviewUrl(nextPreviewUrl);
+    setTemplateFile(file);
+    setTemplateId(null);
+    if (analysisJobId) {
+      setAnalysisJobId(null);
+      setAnalyzedClips([]);
+      setSelectedClipIds([]);
+      setGeneratedResult(null);
+      setGeneratedReelId(null);
+      setIsSavedToLibrary(false);
+      setCurrentStep(1);
+    }
+    setError(null);
+  };
 
   /* ── Generate preview URL for staged video ── */
   useEffect(() => {
@@ -394,17 +444,8 @@ const handleBrandLogoUpload = async (
   const [error, setError] = useState<string | null>(null);
   const [generatedResult, setGeneratedResult] = useState<ReelResult | null>(null);
   const [generatedReelId, setGeneratedReelId] = useState<string | null>(null);
+  const [reelPlaybackError, setReelPlaybackError] = useState(false);
   const [isSavedToLibrary, setIsSavedToLibrary] = useState(false);
-  const refreshCredits = async () => {
-  try {
-    await getCredits();
-
-    window.dispatchEvent(new Event("credits-updated"));
-  } catch (error) {
-    console.error("Failed to refresh credits:", error);
-  }
-};
-
   /* ─────────────────────────────────────────────── */
   /*  Load backend track catalogue                   */
   /* ─────────────────────────────────────────────── */
@@ -623,11 +664,11 @@ const handleBrandLogoUpload = async (
       ) ?? null
     );
   };
-  const toggleClipSelection = (index: number) => {
-  setSelectedClipIndexes((current) =>
-    current.includes(index)
-      ? current.filter((item) => item !== index)
-      : [...current, index]
+  const toggleClipSelection = (clipId: string) => {
+  setSelectedClipIds((current) =>
+    current.includes(clipId)
+      ? current.filter((item) => item !== clipId)
+      : [...current, clipId]
   );
 };
 const playClipPreview = (index: number) => {
@@ -666,10 +707,16 @@ const playClipPreview = (index: number) => {
   /*  Generation pipeline                            */
   /* ─────────────────────────────────────────────── */
   const handleGenerateReel = async () => {
+    if (analysisRunningRef.current) return;
+    analysisRunningRef.current = true;
+    const controller = new AbortController();
+    analysisControllerRef.current = controller;
     setError(null);
     setIsGenerating(true);
     setCurrentStep(1);
     setStepLabel("Ingesting media assets into studio engine...");
+    let activeTemplateId = templateId;
+    let analysisStarted = false;
 
     try {
       const videoFiles = files.filter((f) => f.type.startsWith("video/"));
@@ -677,7 +724,7 @@ const playClipPreview = (index: number) => {
 
       if (videoFiles.length > 0) {
         setStepLabel("Uploading raw photoshoot videos...");
-        const uploadRes = await uploadVideos(videoFiles);
+        const uploadRes = await uploadVideos(videoFiles, controller.signal);
         jobId = uploadRes.job_id;
       } else {
         const demo = await getDemoStatus().catch(() => ({ available: false }));
@@ -689,63 +736,80 @@ const playClipPreview = (index: number) => {
         setStepLabel("Loading studio demo footage...");
       }
 
+      if (templateFile && !activeTemplateId) {
+        setIsUploadingTemplate(true);
+        setStepLabel("Uploading selected template image...");
+        const templateResponse = await uploadTemplateImage(templateFile, controller.signal);
+        if (typeof templateResponse.template_id !== "string" || !templateResponse.template_id.trim()) {
+          throw new Error("The server did not return a template reference. Please try again.");
+        }
+        activeTemplateId = templateResponse.template_id;
+        setTemplateId(activeTemplateId);
+        setIsUploadingTemplate(false);
+      }
+
       setCurrentStep(2);
       setStepLabel("Scoring visual quality, motion stability & 9:16 framing...");
       const analysisInit = await startAnalysis(
-        jobId ? { job_id: jobId } : { use_demo: true }
+        buildAnalysisStartPayload(jobId, activeTemplateId),
+        controller.signal,
       );
+      analysisStarted = true;
       const activeJobId = analysisInit.job_id;
-      setAnalysisJobId(activeJobId);
-
-      let attempts = 0;
-      let done = false;
-      while (!done && attempts < 40) {
-        await new Promise((res) => setTimeout(res, 1200));
-        attempts++;
-        const summary = await getAnalysis(activeJobId);
-
-if (summary.status === "completed") {
-  const clips = summary.clips ?? [];
-
-  setAnalyzedClips(clips);
-
-  // Select all clips by default
-  setSelectedClipIndexes(clips.map((_, index) => index));
-
-  done = true;
-} else if (summary.status === "failed") {
-  throw new Error(summary.error || "Footage analysis failed.");
-}
+      if (typeof activeJobId !== "string" || !activeJobId.trim()) {
+        throw new Error("The server did not return an analysis job ID. Please try again.");
       }
-
-      
+      setAnalysisJobId(activeJobId);
+      const summary = await pollAnalysisUntilTerminal(activeJobId, controller.signal, getAnalysis, {
+        onProgress: (progress) => {
+          if (progress.stage) setStepLabel(`Analyzing footage: ${progress.stage.replaceAll("_", " ")}`);
+        },
+      });
+      const clips = summary.clips;
+      setAnalyzedClips(clips);
+      setSelectedClipIds(clips.map((clip) => clip.clip_id));
+      if (clips.length === 0) {
+        setError("Analysis completed, but no usable clips were found. Try different footage and analyze again.");
+      }
       setIsGenerating(false);
-setCurrentStep(3);
-setStepLabel("Select the clips you want to include in your reel.");
+      setCurrentStep(3);
+      setStepLabel(clips.length ? "Select the clips you want to include in your reel." : "Analysis completed with no usable clips.");
 
     } catch (err: any) {
+      if (activeTemplateId && !analysisStarted) {
+        try {
+          await deleteTemplateImage(activeTemplateId);
+          setTemplateId(null);
+        } catch {
+          // The server keeps the template when an analysis job was created or deletion is unsafe.
+        }
+      }
+      if (controller.signal.aborted) return;
       console.error("Reel generation error:", err);
-      const detail = err.response?.data?.detail;
-      const message =
-        typeof detail === "string"
-          ? detail
-          : detail
-          ? JSON.stringify(detail)
-          : err.message;
-      setError(message || "Failed to generate reel. Please try again.");
+      setError(err instanceof Error && !("isAxiosError" in err)
+        ? err.message
+        : apiErrorMessage(err, "Unable to analyze footage. Check your connection and try again."));
       setIsGenerating(false);
+    } finally {
+      setIsUploadingTemplate(false);
+      analysisRunningRef.current = false;
+      if (analysisControllerRef.current === controller) analysisControllerRef.current = null;
     }
   };
 
   const handleGenerateSelectedReel = async () => {
+  if (generationRunningRef.current) return;
+  const creditGate = getCreditGate(credits, reelCost, creditsLoading, creditsError);
+  if (!creditGate.allowed) {
+    setError(creditGate.message || "Generation is unavailable until credit information loads.");
+    return;
+  }
   if (!analysisJobId) {
     setError("Please analyze the footage first.");
     return;
   }
 
-  const selectedClips = analyzedClips.filter((_, index) =>
-    selectedClipIndexes.includes(index)
-  );
+  const selectedClips = selectedClipsById(analyzedClips, selectedClipIds);
 
   if (selectedClips.length === 0) {
     setError("Please select at least one clip.");
@@ -753,6 +817,7 @@ setStepLabel("Select the clips you want to include in your reel.");
   }
 
   setError(null);
+  generationRunningRef.current = true;
   setIsGenerating(true);
   setCurrentStep(3);
   setStepLabel("Sequencing selected clips...");
@@ -760,28 +825,12 @@ setStepLabel("Select the clips you want to include in your reel.");
   try {
     const initialPlan = await planReel({
       analysis_job_id: analysisJobId,
+      selected_clip_ids: selectedClips.map((clip) => clip.clip_id),
       target_duration: targetDuration,
     });
+    assertPlanMatchesSelection(selectedClips.map((clip) => clip.clip_id), initialPlan.clips);
 
-    const selectedKeys = new Set(
-      selectedClips.map(
-        (clip) =>
-          `${clip.source_file}|${clip.start_time}|${clip.end_time}`
-      )
-    );
-
-    const plannedClips = initialPlan.clips.filter((clip) =>
-      selectedKeys.has(
-        `${clip.source_file}|${clip.original_start}|${clip.original_end}`
-      )
-    );
-    if (plannedClips.length === 0) {
-  throw new Error(
-    "None of the selected clips could be matched to the reel plan."
-  );
-}
-
-const finalClips = plannedClips;
+const finalClips = initialPlan.clips;
 
     const planToGenerate: ReelPlan = {
       ...initialPlan,
@@ -825,17 +874,35 @@ const finalClips = plannedClips;
     const result = await generateReel({
   reel_plan: planToGenerate,
   analysis_job_id: analysisJobId,
+  selected_clip_ids: planToGenerate.clips.map((clip) => clip.clip_id),
+}, (stage) => {
+  const stageLabels = {
+    queued: "Reel queued for rendering...",
+    preparing: "Preparing reel assets...",
+    rendering: "Rendering clips and assembling the reel...",
+    finalizing: "Finalizing the rendered reel...",
+    completed: "Reel rendering complete.",
+    failed: "Reel rendering failed.",
+  } as const;
+  setStepLabel(stageLabels[stage]);
 });
 
+if (!result.reel_id || !result.download_url) {
+  throw new Error("The server did not return the final reel file. Please retry generation.");
+}
+const savedProject = createSavedReelProject(result, {
+  title: collectionTitle,
+  category,
+  productPrice: formatInrPrice(price) ?? "",
+});
+if (!savedProject) {
+  throw new Error("The server did not return a playable saved reel.");
+}
+onAddToLibrary?.(savedProject);
+setIsSavedToLibrary(true);
 setGeneratedResult(result);
-
-const reelId =
-  (result as any).reel_id || `reel-${Date.now()}`;
-
-setGeneratedReelId(reelId);
-
-// Refresh credit balance after successful reel generation
-await refreshCredits();
+setGeneratedReelId(result.reel_id);
+setReelPlaybackError(false);
 
     setTimeout(() => {
       const el = document.getElementById("ready-reel-section");
@@ -851,6 +918,8 @@ await refreshCredits();
       apiErrorMessage(err, "Failed to generate reel. Please try again.")
     );
   } finally {
+    void onRefreshCredits().catch(() => undefined);
+    generationRunningRef.current = false;
     setIsGenerating(false);
   }
 };
@@ -858,24 +927,6 @@ await refreshCredits();
   /* ─────────────────────────────────────────────── */
   /*  Save / handoff                                 */
   /* ─────────────────────────────────────────────── */
-  const handleSaveToLibrary = () => {
-    if (!generatedReelId || !generatedResult) return;
-    onAddToLibrary?.({
-      id: generatedReelId,
-      title: collectionTitle || "Untitled Reel",
-      category,
-      durationSeconds: Math.round(generatedResult.duration || targetDuration),
-      resolution: "1080x1920 (9:16)",
-      videoUrl: reelFileUrl(generatedReelId),
-      thumbnailUrl: "/tv_editorial_1.jpg",
-      createdAt: "Just now",
-      viewsCount: "1",
-      status: "ready",
-      productPrice: formatInrPrice(price) ?? "",
-    });
-    setIsSavedToLibrary(true);
-  };
-
   const handleOpenInEditor = () =>
     onOpenInEditor?.({
       title: collectionTitle,
@@ -1031,11 +1082,13 @@ await refreshCredits();
           </p>
           <div className="w-64 h-[440px] rounded-2xl overflow-hidden bg-black border-2 border-emerald-500/40 shadow-xl shrink-0">
             <video
-              src={reelFileUrl(generatedReelId)}
+              src={generatedResult.download_url}
               controls
               autoPlay
               loop
-              className="w-full h-full object-cover"
+              playsInline
+              onError={() => setReelPlaybackError(true)}
+              className="w-full h-full object-contain bg-black"
             />
           </div>
           <div className="flex-1 text-left space-y-4">
@@ -1043,6 +1096,11 @@ await refreshCredits();
             <h2 className="text-2xl font-bold font-display text-[#faf7f2]">
               {collectionTitle}
             </h2>
+            {reelPlaybackError && (
+              <p className="text-sm text-amber-300" role="alert">
+                The saved reel could not be previewed. Try downloading the MP4 or check your connection.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2 text-xs mono">
               <span className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-[#faf7f2]">
                 ⏱ {Math.round(generatedResult.duration)}s
@@ -1067,7 +1125,7 @@ await refreshCredits();
             </div>
             <div className="flex flex-wrap gap-3 pt-2">
               <a
-                href={reelFileUrl(generatedReelId)}
+                href={generatedResult.download_url}
                 download={`${collectionTitle.toLowerCase().replace(/\s+/g, "_")}.mp4`}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#ff681b] hover:bg-[#ff7d3b] text-white font-bold text-sm transition-all shadow-lg shadow-[#ff681b]/20"
               >
@@ -1075,12 +1133,11 @@ await refreshCredits();
               </a>
               <button
                 type="button"
-                onClick={handleSaveToLibrary}
-                disabled={isSavedToLibrary}
+                disabled
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white font-semibold text-sm transition-all"
               >
                 <Check className="w-4 h-4 text-emerald-400" />
-                {isSavedToLibrary ? "SAVED" : "SAVE TO LIBRARY"}
+                {isSavedToLibrary ? "ADDED TO PREVIOUS WORKS" : "SAVING REEL"}
               </button>
               <button
                 type="button"
@@ -1396,7 +1453,7 @@ await refreshCredits();
     </h3>
 
     <p className="text-xs text-[var(--db-muted)] mt-1">
-  {selectedClipIndexes.length} of {analyzedClips.length} clips selected
+  {selectedClipIds.length} of {analyzedClips.length} clips selected
 </p>
   </div>
 
@@ -1404,8 +1461,8 @@ await refreshCredits();
     <button
       type="button"
       onClick={() =>
-        setSelectedClipIndexes(
-          analyzedClips.map((_, index) => index)
+        setSelectedClipIds(
+          analyzedClips.map((clip) => clip.clip_id)
         )
       }
       className="px-2.5 py-1 rounded-md border border-white/10 text-[10px] text-white hover:bg-white/5"
@@ -1415,7 +1472,7 @@ await refreshCredits();
 
     <button
       type="button"
-      onClick={() => setSelectedClipIndexes([])}
+      onClick={() => setSelectedClipIds([])}
       className="px-2.5 py-1 rounded-md border border-white/10 text-[10px] text-[var(--db-muted)] hover:bg-white/5"
     >
       Clear
@@ -1461,14 +1518,14 @@ await refreshCredits();
     <div className="space-y-2 max-h-[400px] overflow-y-auto">
       {analyzedClips.map((clip, index) => (
         <div
-  key={`${clip.source_file}-${clip.start_time}-${index}`}
+  key={clip.clip_id}
   role="group"
   aria-label={`Clip ${index + 1}: ${clip.source_file}`}
-  onClick={() => toggleClipSelection(index)}
+  onClick={() => toggleClipSelection(clip.clip_id)}
   className={`flex items-center justify-between gap-4 p-3 rounded-lg border cursor-pointer transition-all ${
   previewClipIndex === index
     ? "bg-[#ff681b]/20 border-[#ff681b]"
-    : selectedClipIndexes.includes(index)
+    : selectedClipIds.includes(clip.clip_id)
       ? "bg-[#ff681b]/10 border-[#ff681b]/50"
       : "bg-black/40 border-white/10 opacity-60"
 }`}
@@ -1492,19 +1549,19 @@ await refreshCredits();
 
   <button
     type="button"
-    aria-pressed={selectedClipIndexes.includes(index)}
-    aria-label={`${selectedClipIndexes.includes(index) ? "Deselect" : "Select"} clip ${index + 1}`}
+    aria-pressed={selectedClipIds.includes(clip.clip_id)}
+    aria-label={`${selectedClipIds.includes(clip.clip_id) ? "Deselect" : "Select"} clip ${index + 1}`}
     onClick={(event) => {
       event.stopPropagation();
-      toggleClipSelection(index);
+      toggleClipSelection(clip.clip_id);
     }}
     className={`w-5 h-5 rounded border flex items-center justify-center ${
-      selectedClipIndexes.includes(index)
+      selectedClipIds.includes(clip.clip_id)
         ? "bg-[#ff681b] border-[#ff681b]"
         : "border-white/30"
     }`}
   >
-    {selectedClipIndexes.includes(index) && (
+    {selectedClipIds.includes(clip.clip_id) && (
       <span className="text-white text-xs font-bold">✓</span>
     )}
   </button>
@@ -1912,6 +1969,70 @@ await refreshCredits();
           {/* ══ RIGHT: COLLECTION DETAILS + GENERATE ══ */}
           <div className="space-y-6">
 
+            <div className="p-5 rounded-xl bg-[#111115] border border-white/10 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold font-display tracking-wider text-white/70 uppercase">
+                    Opening Template
+                  </h3>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--db-muted)]">
+                    Optional image shown at the start of the final reel for up to 1 second.
+                  </p>
+                </div>
+                {templateFile && (
+                  <span className="shrink-0 rounded-md border border-[#ff681b]/30 bg-[#ff681b]/10 px-2 py-1 text-[10px] font-semibold text-[#ff681b]">
+                    {analysisJobId ? "ATTACHED" : "SELECTED"}
+                  </span>
+                )}
+              </div>
+              {templatePreviewUrl ? (
+                <div className="overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                  <img
+                    src={templatePreviewUrl}
+                    alt="Selected opening template preview"
+                    className="max-h-48 w-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/20 px-4 text-center text-xs text-[var(--db-dim)]">
+                  No template selected. Your reel will start with its regular video content.
+                </div>
+              )}
+              <input
+                ref={templateInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(event) => {
+                  selectTemplateImage(event.target.files?.[0] ?? null);
+                  event.target.value = "";
+                }}
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => templateInputRef.current?.click()}
+                  disabled={isGenerating || isUploadingTemplate}
+                  className="min-h-10 flex-1 rounded-lg border border-[#ff681b]/40 bg-[#ff681b]/10 px-3 py-2 text-xs font-semibold text-[#ff681b] transition-colors hover:bg-[#ff681b]/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ff681b] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isUploadingTemplate ? "Uploading template…" : templateFile ? "Change image" : "Choose image"}
+                </button>
+                {templateFile && (
+                  <button
+                    type="button"
+                    onClick={() => selectTemplateImage(null)}
+                    disabled={isGenerating || isUploadingTemplate}
+                    className="min-h-10 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 transition-colors hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-[var(--db-dim)]">
+                JPG, PNG, or WEBP · 20 MB maximum · You can continue without one.
+              </p>
+            </div>
+
             {/* Selected track summary */}
             {selectedTrack && (
               <div className="p-4 rounded-xl bg-[#0d1a10] border border-[#1DB954]/25 flex items-center gap-3">
@@ -2160,6 +2281,16 @@ await refreshCredits();
             </div>
 
             {/* Generate button */}
+            {analyzedClips.length > 0 && (
+              <CreditQuoteNotice
+                credits={credits}
+                cost={reelCost}
+                loading={creditsLoading}
+                error={creditsError}
+                canGenerate={canGenerate}
+                onRetry={() => void onRefreshCredits()}
+              />
+            )}
             <button
               type="button"
               onClick={
@@ -2170,7 +2301,8 @@ await refreshCredits();
               disabled={
   isGenerating ||
   files.length === 0 ||
-  (analyzedClips.length > 0 && selectedClipIndexes.length === 0)
+  (analyzedClips.length > 0 && !canGenerate) ||
+  (analyzedClips.length > 0 && selectedClipIds.length === 0)
 }
               className="w-full py-4 px-6 rounded-xl bg-[#ff681b] hover:bg-[#ff7d3b] text-white font-bold font-display text-sm tracking-wider uppercase transition-all shadow-xl shadow-[#ff681b]/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >

@@ -9,27 +9,29 @@ from app.services.scene_detector import (
     DEFAULT_SCENE_THRESHOLD,
     detect_scenes,
 )
-from app.services.similarity_analyzer import compute_uniqueness, hamming_distance
+from app.services.similarity_analyzer import _BKTree, _hash_sequence, compute_uniqueness, signature_distance
 
 
 def reject_lower_scored_duplicates(
-    clips: list[AnalyzedClip], hashes: list[int], duplicate_distance_threshold: int
+    clips: list[AnalyzedClip], hashes: list[int | tuple[int, ...]], duplicate_distance_threshold: int
 ) -> None:
     """Among clips that are near-duplicates of each other, keeps only the
     higher-scoring one and rejects the rest (mutates `clips` in place).
     """
-    n = len(clips)
-    for i in range(n):
-        if not clips[i].accepted:
-            continue
-        for j in range(i + 1, n):
-            if not clips[j].accepted:
-                continue
-            if hamming_distance(hashes[i], hashes[j]) <= duplicate_distance_threshold:
-                loser = clips[i] if clips[i].score.score < clips[j].score.score else clips[j]
-                loser.accepted = False
-                if "Duplicate of a higher-quality clip" not in loser.score.reasons:
-                    loser.score.reasons.append("Duplicate of a higher-quality clip")
+    tree = _BKTree()
+    indexed: list[tuple[AnalyzedClip, tuple[int, ...]]] = sorted(
+        ((clip, signature) for clip, signature in zip(clips, hashes) if clip.accepted),
+        key=lambda pair: (-pair[0].score.score, pair[0].segment.source_file, pair[0].segment.start_time),
+    )
+    for clip, signature in indexed:
+        signature = _hash_sequence(signature)
+        nearby = tree.within(signature, duplicate_distance_threshold * len(signature))
+        if nearby:
+            clip.accepted = False
+            if "Duplicate of a higher-quality clip" not in clip.score.reasons:
+                clip.score.reasons.append("Duplicate of a higher-quality clip")
+        else:
+            tree.add(signature)
 
 
 def rank_analyzed_clips(clips: list[AnalyzedClip]) -> list[AnalyzedClip]:
@@ -57,7 +59,7 @@ def analyze_video(
         video_path, threshold=scene_threshold, min_segment_duration=min_segment_duration
     )
     segment_analyses = [analyze_segment(video_path, seg, sample_fps=sample_fps) for seg in segments]
-    hashes = [sa.perceptual_hash for sa in segment_analyses]
+    hashes = [sa.perceptual_hashes or (sa.perceptual_hash,) for sa in segment_analyses]
 
     uniqueness_scores, duplicate_flags = compute_uniqueness(
         hashes,
@@ -75,15 +77,15 @@ def analyze_video(
             and analysis.metrics.avg_sharpness >= thresholds.sharpness_reject_floor
             and clip_score.score >= thresholds.reject_score_threshold
         )
-        clips.append(
-            AnalyzedClip(
+        clip = AnalyzedClip(
                 segment=segment,
                 metrics=analysis.metrics,
                 score=clip_score,
                 accepted=accepted,
                 perceptual_hash=format(analysis.perceptual_hash, "016x"),
             )
-        )
+        clip._perceptual_hashes = analysis.perceptual_hashes or (analysis.perceptual_hash,)
+        clips.append(clip)
 
     reject_lower_scored_duplicates(
         clips, hashes, duplicate_distance_threshold=thresholds.duplicate_distance_threshold

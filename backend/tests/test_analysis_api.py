@@ -74,6 +74,76 @@ def test_analysis_response_contract_rejects_unknown_status_and_stage():
         AnalysisStatusResponse(job_id=uuid.uuid4(), status="processing", stage="rendering")
 
 
+def test_completed_analysis_response_omits_nullable_nested_clip_fields():
+    from app.core.job_store import create_analysis_job, update_analysis_job
+    from app.schemas.analysis import QualityMetrics
+    from app.schemas.batch import BatchClip, SelectionStatus
+
+    job_id = str(uuid.uuid4())
+    clip = BatchClip(
+        source_file="video.mp4",
+        start_time=0,
+        end_time=2,
+        duration=2,
+        score=80,
+        metrics=QualityMetrics(
+            avg_sharpness=1,
+            avg_brightness=1,
+            dark_frame_ratio=0,
+            avg_motion=0.3,
+            sampled_frame_count=4,
+        ),
+        reasons=["clear subject"],
+        perceptual_hash="abc123",
+        status=SelectionStatus.SELECTED,
+        selected=True,
+    )
+    batch_result = SimpleNamespace(
+        total_segments=1,
+        accepted_before_dedupe=1,
+        duplicates_removed=0,
+        final_selected_count=1,
+        processing_time_seconds=0.1,
+        all_clips=[clip],
+    )
+    create_analysis_job(job_id, source_dir=Path.cwd())
+    update_analysis_job(
+        job_id,
+        status="completed",
+        stage="completed",
+        result=batch_result,
+        per_video_results=[SimpleNamespace(processing_time_seconds=0.1)],
+    )
+
+    response = client.get(f"/api/analysis/{job_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["clips"] == [
+        {
+            "clip_id": str(clip.clip_id),
+            "source_file": "video.mp4",
+            "start_time": 0,
+            "end_time": 2,
+            "duration": 2,
+            "score": 80,
+            "metrics": {
+                "avg_sharpness": 1,
+                "avg_brightness": 1,
+                "dark_frame_ratio": 0,
+                "avg_motion": 0.3,
+                "sampled_frame_count": 4,
+            },
+            "reasons": ["clear subject"],
+            "perceptual_hash": "abc123",
+            "status": "selected",
+            "selected": True,
+            "locked": False,
+        }
+    ]
+
+
 def test_analyze_rejects_unregistered_template():
     response = client.post(
         "/api/analysis/analyze",

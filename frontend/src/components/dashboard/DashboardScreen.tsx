@@ -5,6 +5,7 @@ import ReelImageEditorWorkspace, {
   type ImageSlide,
 } from "./ReelImageEditorWorkspace";
 import PhotoshootUploadsPage from "./PhotoshootUploadsPage";
+import { upsertSavedReel, type SavedReelProject } from "../../savedReels";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
@@ -48,24 +49,20 @@ import "./Dashboard.css";
    TYPES
    ========================================================= */
 
-export interface ReelProject {
-  id: string;
-  title: string;
-  category: string;
-  durationSeconds: number;
-  resolution: string;
-  videoUrl: string;
-  thumbnailUrl: string;
-  createdAt: string;
-  viewsCount?: string;
-  status: "ready" | "rendering" | "draft";
-  productPrice?: string;
-}
+export type ReelProject = SavedReelProject;
 
 interface DashboardScreenProps {
   onCreateNewReel: (projectName?: string, category?: string) => void;
   onLaunchDemo?: () => void;
   onBackToLanding: () => void;
+  creditQuote: {
+    credits: number | null;
+    cost: number | null;
+    loading: boolean;
+    error: string | null;
+    canGenerate: boolean;
+    refresh: () => Promise<void>;
+  };
 }
 
 /* =========================================================
@@ -134,46 +131,13 @@ const SAMPLE_PROJECTS_PRESET: ReelProject[] = [
 export default function DashboardScreen({
   onCreateNewReel,
   onBackToLanding,
+  creditQuote,
 }: DashboardScreenProps) {
   const { user, logout } = useAuth();
   const { theme } = useTheme();
 
   const isLight = theme === "light";
-  const [credits, setCredits] = useState<number | null>(null);
-
-const fetchCredits = async () => {
-  try {
-    const API_BASE = import.meta.env.VITE_API_BASE_URL;
-
-const response = await fetch(`${API_BASE}/credits`);
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch credits");
-    }
-
-    const data = await response.json();
-
-    setCredits(data.credits);
-  } catch (error) {
-    console.error("Failed to fetch credits:", error);
-  }
-};
-
-useEffect(() => {
-  fetchCredits();
-}, []);
-
-useEffect(() => {
-  const handleCreditsUpdated = () => {
-    fetchCredits();
-  };
-
-  window.addEventListener("credits-updated", handleCreditsUpdated);
-
-  return () => {
-    window.removeEventListener("credits-updated", handleCreditsUpdated);
-  };
-}, []);
+  const { credits, cost, loading: creditsLoading, error: creditsError, canGenerate, refresh: refreshCredits } = creditQuote;
 
   const storageKey = user
     ? `kaladhar_reels_${user.id}`
@@ -203,7 +167,8 @@ useEffect(() => {
             ...p,
             // Older builds substituted sample videos for unavailable reels.
             // Clear those known demo URLs instead of showing unrelated footage.
-            videoUrl: /^\/?sample_reel_\d+\.mp4(?:[?#].*)?$/i.test(p.videoUrl || "")
+            videoUrl: /^\/?sample_reel_\d+\.mp4(?:[?#].*)?$/i.test(p.videoUrl || "") ||
+              /^blob:/i.test(p.videoUrl || "")
               ? ""
               : p.videoUrl || "",
           }));
@@ -251,10 +216,12 @@ useEffect(() => {
   const [activeCinemaReel, setActiveCinemaReel] =
     useState<ReelProject | null>(null);
   const [cinemaVideoUnavailable, setCinemaVideoUnavailable] = useState(false);
+  const [cinemaVideoLoading, setCinemaVideoLoading] = useState(false);
   const cinemaDialogRef = useDialogFocus<HTMLDivElement>(!!activeCinemaReel, () => setActiveCinemaReel(null));
 
   useEffect(() => {
     setCinemaVideoUnavailable(false);
+    setCinemaVideoLoading(Boolean(activeCinemaReel?.videoUrl));
   }, [activeCinemaReel?.videoUrl]);
 
   const [playingCardId, setPlayingCardId] =
@@ -674,12 +641,6 @@ const handleSaveProfile = (
           setIsEditingManualReel(false);
           setManualEditorProject(null);
         }}
-        onSaveToLibrary={(savedReel) => {
-          setProjects((prev) => [savedReel, ...prev]);
-          setIsEditingManualReel(false);
-          setManualEditorProject(null);
-          setActiveTab("library");
-        }}
       />
     );
   }
@@ -808,10 +769,10 @@ const handleSaveProfile = (
   >
     <CreditCard />
 
-    <span>Demo credits</span>
+    <span>Credits</span>
 
     <span className="nav-small-label">
-  {credits !== null ? credits : "..."}
+  {creditsLoading ? "…" : credits ?? "—"}
 </span>
   </button>
   {/* SETTINGS */}
@@ -922,7 +883,7 @@ const handleSaveProfile = (
   />
 
  ) : activeTab === "credits" ? (
-  <CreditsPage credits={credits} />
+  <CreditsPage credits={credits} cost={cost} loading={creditsLoading} error={creditsError} onRetry={() => void refreshCredits()} />
 
   ) : activeTab === "previous" ? (
    <PreviousWorksPage
@@ -932,14 +893,21 @@ const handleSaveProfile = (
   onOpenLibrary={() => setActiveTab("library")}
   onOpenCinema={(project) => {
     setActiveCinemaReel(project);
+    setCinemaVideoLoading(Boolean(project.videoUrl));
   }}
 />
 
   ) : activeTab === "upload" ? (
     <PhotoshootUploadsPage
+      credits={credits}
+      reelCost={cost}
+      creditsLoading={creditsLoading}
+      creditsError={creditsError}
+      canGenerate={canGenerate}
+      onRefreshCredits={refreshCredits}
       onBackToLibrary={() => setActiveTab("library")}
       onAddToLibrary={(savedProject) => {
-        setProjects((prev) => [savedProject, ...prev]);
+        setProjects((prev) => upsertSavedReel(prev, savedProject));
       }}
       onOpenInEditor={(projData) => {
         handleOpenManualEditor(projData);
@@ -1312,6 +1280,7 @@ const handleSaveProfile = (
                         setActiveCinemaReel(
                           project
                         );
+                        setCinemaVideoLoading(Boolean(project.videoUrl));
                       }}
                       onDelete={(e) =>
                         handleDeleteProject(
@@ -1361,12 +1330,13 @@ const handleSaveProfile = (
                     >
                       <div className="list-project-info">
                         <div className="list-thumbnail">
-                          <img
-                            src={
-                              project.thumbnailUrl
-                            }
-                            alt={project.title}
-                          />
+                          {project.thumbnailUrl ? (
+                            <img src={project.thumbnailUrl} alt={project.title} />
+                          ) : project.videoUrl ? (
+                            <video src={project.videoUrl} muted playsInline preload="metadata" aria-label={`${project.title} video preview`} />
+                          ) : (
+                            <span className="list-thumbnail-empty" role="status">Video unavailable</span>
+                          )}
 
                           <div className="list-play-overlay">
                             {playingCardId ===
@@ -1415,11 +1385,10 @@ const handleSaveProfile = (
                       >
                         <button
                           type="button"
-                          onClick={() =>
-                            setActiveCinemaReel(
-                              project
-                            )
-                          }
+                          onClick={() => {
+                            setActiveCinemaReel(project);
+                            setCinemaVideoLoading(Boolean(project.videoUrl));
+                          }}
                           title="Preview"
                         >
                           <Maximize2 />
@@ -1669,9 +1638,9 @@ const handleSaveProfile = (
             }}
           >
             <CreditCard />
-            <span>Demo credits</span>
+            <span>Credits</span>
             <span>
-  {credits !== null ? credits : "..."}
+  {creditsLoading ? "…" : credits ?? "—"}
 </span>
           </button>
 
@@ -1788,14 +1757,23 @@ const handleSaveProfile = (
 
             <div className="cinema-video">
               {activeCinemaReel.videoUrl && !cinemaVideoUnavailable ? (
-                <video
-                  src={activeCinemaReel.videoUrl}
-                  controls
-                  autoPlay
-                  loop
-                  playsInline
-                  onError={() => setCinemaVideoUnavailable(true)}
-                />
+                <>
+                  {cinemaVideoLoading && <p className="cinema-video-loading" role="status">Loading reel…</p>}
+                  <video
+                    src={activeCinemaReel.videoUrl}
+                    controls
+                    autoPlay
+                    loop
+                    playsInline
+                    onLoadStart={() => setCinemaVideoLoading(true)}
+                    onCanPlay={() => setCinemaVideoLoading(false)}
+                    onPlaying={() => setCinemaVideoLoading(false)}
+                    onError={() => {
+                      setCinemaVideoLoading(false);
+                      setCinemaVideoUnavailable(true);
+                    }}
+                  />
+                </>
               ) : (
                 <p role="status">Video unavailable</p>
               )}
@@ -2119,19 +2097,15 @@ function DashfolioReelCard({
       <div className="reel-media">
         {project.videoUrl && !videoUnavailable ? (
           <>
-            <img
-              src={project.thumbnailUrl}
-              alt={project.title}
-              className={isPlaying ? "poster hidden" : "poster"}
-            />
             <video
               ref={videoRef}
               src={project.videoUrl}
               onError={() => setVideoUnavailable(true)}
+              preload="metadata"
               loop
               muted={isMuted}
               playsInline
-              className={isPlaying ? "reel-video playing" : "reel-video"}
+              className="reel-video playing"
             />
           </>
         ) : (
@@ -2500,8 +2474,16 @@ function PreviousWorksPage({
 }
 function CreditsPage({
   credits,
+  cost,
+  loading,
+  error,
+  onRetry,
 }: {
   credits: number | null;
+  cost: number | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
 }) {
   return (
     <section className="credits-page">
@@ -2510,7 +2492,7 @@ function CreditsPage({
         <div>
           <span className="credits-eyebrow">ACCOUNT</span>
           <h1>Credits</h1>
-          <p>Demo balance shown; account-specific credits are not configured.</p>
+          <p>Live balance for the shared demo account.</p>
         </div>
       </div>
       
@@ -2535,7 +2517,7 @@ function CreditsPage({
     {/* LEFT */}
     <div className="credits-balance-main">
       <div className="credits-number">
-  {credits !== null ? credits : "..."}
+  {loading ? "Loading…" : credits !== null ? credits : "Unavailable"}
 </div>
 
       <p className="credits-remaining">
@@ -2555,7 +2537,7 @@ function CreditsPage({
 
         <span className="credits-progress-value">
   <strong>
-    {credits !== null ? credits : "..."}
+            {loading ? "Loading…" : credits !== null ? credits : "Unavailable"}
   </strong>{" "}
   / 50
 </span>
@@ -2583,11 +2565,11 @@ function CreditsPage({
         </div>
 
         <div className="credits-renewal-content">
-          <h3>Renews monthly</h3>
+          <h3>Shared demo account</h3>
 
           <p>
-            Credits refresh automatically every month
-            based on your subscription plan.
+            Demo account balance
+            is returned by the backend credits service.
           </p>
         </div>
       </div>
@@ -2603,12 +2585,19 @@ function CreditsPage({
     <span className="credits-usage-label">USAGE</span>
 
     <span>
-      <strong>1 credit</strong> = 1 successfully generated reel
+      <strong>{cost !== null ? `${cost} credits` : "Cost unavailable"}</strong> per reel generation
     </span>
 
     
   </div>
 </div>
+
+{error && (
+  <div role="alert" className="mt-4 flex flex-wrap items-center gap-3 text-sm text-[var(--color-error)]">
+    <span>{error}</span>
+    <button type="button" onClick={onRetry} className="underline">Retry</button>
+  </div>
+)}
 
       {/* PLANS */}
       <div className="credits-section-title">

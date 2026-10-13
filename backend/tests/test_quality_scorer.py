@@ -84,7 +84,7 @@ def test_score_clip_bad_metrics_scores_low_with_negative_reasons():
     assert result.score < 35
     assert "Low sharpness" in result.reasons
     assert "Too dark" in result.reasons
-    assert "Very low motion" in result.reasons
+    assert "Low frame-to-frame change" in result.reasons
     assert "Contains dark/underexposed frames" in result.reasons
     assert "Highly similar to another clip" in result.reasons
 

@@ -8,6 +8,7 @@ import type {
   ShotRole,
   TransitionType,
 } from "../types";
+import CreditQuoteNotice from "./CreditQuoteNotice";
 
 interface EditorScreenProps {
   reel: ReelResult;
@@ -16,6 +17,12 @@ interface EditorScreenProps {
   onGenerateUpdated: () => void;
   generating: boolean;
   error: string | null;
+  credits: number | null;
+  reelCost: number | null;
+  creditsLoading: boolean;
+  creditsError: string | null;
+  canGenerate: boolean;
+  onRetryCredits: () => void;
 }
 
 const ROLE_LABEL: Record<ShotRole, string> = {
@@ -67,6 +74,12 @@ export default function EditorScreen({
   onGenerateUpdated,
   generating,
   error,
+  credits,
+  reelCost,
+  creditsLoading,
+  creditsError,
+  canGenerate,
+  onRetryCredits,
 }: EditorScreenProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([]);
@@ -290,7 +303,7 @@ export default function EditorScreen({
         <div className="flex items-stretch gap-1 overflow-x-auto pb-2">
           {clips.map((clip, i) => (
             <div
-              key={`${clip.source_file}-${clip.original_start}-${i}`}
+              key={clip.clip_id}
               className="flex items-stretch gap-1 shrink-0"
             >
               {i > 0 && (
@@ -880,6 +893,15 @@ export default function EditorScreen({
         </p>
       )}
 
+      <CreditQuoteNotice
+        credits={credits}
+        cost={reelCost}
+        loading={creditsLoading}
+        error={creditsError}
+        canGenerate={canGenerate}
+        onRetry={onRetryCredits}
+      />
+
       {/* ACTIONS */}
       <div className="flex justify-center gap-3">
         <a
@@ -892,7 +914,7 @@ export default function EditorScreen({
 
         <button
           onClick={onGenerateUpdated}
-          disabled={generating || clips.length === 0}
+          disabled={generating || clips.length === 0 || !canGenerate}
           className="rounded-md bg-[var(--color-brand-primary)] disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-secondary)] text-white font-medium px-8 py-3 shadow-lg hover:opacity-90 transition-colors"
         >
           {generating

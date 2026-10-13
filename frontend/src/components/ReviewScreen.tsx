@@ -12,7 +12,7 @@ interface ReviewScreenProps {
   summary: AnalysisSummary;
   clips: ClipData[];
   files: File[];
-  onToggleClip: (index: number) => void;
+  onToggleClip: (clipId: string) => void;
   onSelectAll: () => void;
   onClearAll: () => void;
   targetDuration: number;
@@ -206,9 +206,9 @@ export default function ReviewScreen({
 
       {/* CLIPS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {clips.map((clip, i) => (
+        {clips.map((clip) => (
           <ClipCard
-  key={`${clip.source_file}-${clip.start_time}`}
+  key={clip.clip_id}
   clip={clip}
   file={files.find((file) => {
     const sourceName =
@@ -219,7 +219,7 @@ export default function ReviewScreen({
       file.name === sourceName
     );
   })}
-  onToggle={() => onToggleClip(i)}
+  onToggle={() => onToggleClip(clip.clip_id)}
 />
         ))}
       </div>

@@ -18,6 +18,7 @@ export interface QualityMetrics {
 }
 
 export interface ClipData {
+  clip_id: string;
   source_file: string;
   start_time: number;
   end_time: number;
@@ -76,6 +77,7 @@ export interface TransitionConfig {
 }
 
 export interface PlannedReelClip {
+  clip_id: string;
   position: number;
   source_file: string;
   original_start: number;
@@ -180,7 +182,7 @@ export interface ReelResult {
   reel_id: string;
   status: string;
   download_url: string;
-  output_path: string;
+  output_path?: string;
   duration: number;
   width: number;
   height: number;

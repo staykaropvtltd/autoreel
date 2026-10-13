@@ -1,4 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { deleteTemplateImage } from "../api";
+import { isSameTemplateImage } from "../templateSelection";
 import type { BrandingInfo } from "../branding";
 import type { ProductInfo } from "../types";
 
@@ -76,6 +78,11 @@ const [templateUploading, setTemplateUploading] =
 
 const templateInputRef =
   useRef<HTMLInputElement>(null);
+const templatePreviewRef = useRef<string | null>(null);
+
+useEffect(() => () => {
+  if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
+}, []);
 
 
   /* =========================================================
@@ -109,6 +116,7 @@ const templateInputRef =
   file: File | null
 ) => {
   if (!file) return;
+  if (templateUploading || isSameTemplateImage(templateImage, file)) return;
 
   const allowedTypes = [
     "image/jpeg",
@@ -126,9 +134,13 @@ const templateInputRef =
     return;
   }
 
+  if (templateId) void deleteTemplateImage(templateId).catch(() => {});
+
   setTemplateImage(file);
 
+  if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
   const previewUrl = URL.createObjectURL(file);
+  templatePreviewRef.current = previewUrl;
   setTemplatePreview(previewUrl);
 
   const formData = new FormData();
@@ -158,6 +170,8 @@ const templateInputRef =
 
     setTemplateId(data.template_id);
   } catch {
+    URL.revokeObjectURL(previewUrl);
+    templatePreviewRef.current = null;
     setTemplateImage(null);
     setTemplatePreview(null);
     setTemplateId(null);
@@ -288,12 +302,12 @@ const templateInputRef =
     ref={templateInputRef}
     type="file"
     accept="image/jpeg,image/png,image/webp"
+    disabled={templateUploading}
     className="hidden"
-    onChange={(e) =>
-      handleTemplateImage(
-        e.target.files?.[0] || null
-      )
-    }
+    onChange={(e) => {
+      handleTemplateImage(e.target.files?.[0] || null);
+      e.target.value = "";
+    }}
   />
 
   {!templatePreview ? (
@@ -377,7 +391,11 @@ const templateInputRef =
 
           <button
             type="button"
+            disabled={templateUploading}
             onClick={() => {
+              if (templateId) void deleteTemplateImage(templateId).catch(() => {});
+              if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
+              templatePreviewRef.current = null;
               setTemplateImage(null);
               setTemplatePreview(null);
               setTemplateId(null);

@@ -5,9 +5,7 @@ import {
   Check,
   Clock,
   Copy,
-  Download,
   FileAudio,
-  Film,
   Globe,
   Image as ImageIcon,
   Layers,
@@ -26,6 +24,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { listMusic, musicPreviewUrl } from "../../api";
+import { photoReelExportStatus } from "../../photoReelExport";
 import type { MusicTrack } from "../../types";
 import "./ReelImageEditorWorkspace.css";
 
@@ -108,19 +107,6 @@ export interface ManualReelProject {
 interface ReelImageEditorWorkspaceProps {
   initialProject?: Partial<ManualReelProject>;
   onClose: () => void;
-  onSaveToLibrary: (savedReel: {
-    id: string;
-    title: string;
-    category: string;
-    durationSeconds: number;
-    resolution: string;
-    videoUrl: string;
-    thumbnailUrl: string;
-    createdAt: string;
-    viewsCount: string;
-    status: "ready";
-    productPrice: string;
-  }) => void;
 }
 
 const fallbackEmptySlide: ImageSlide = {
@@ -141,7 +127,6 @@ const SAMPLE_VAISHKALA_LOGO =
 export default function ReelImageEditorWorkspace({
   initialProject,
   onClose,
-  onSaveToLibrary,
 }: ReelImageEditorWorkspaceProps) {
   /* =======================================================
      PROJECT STATE
@@ -1043,182 +1028,6 @@ export default function ReelImageEditorWorkspace({
     }
   };
 
-  /* =======================================================
-     EXPORT ENGINE (Real Video Recording & Audio Mixing)
-     ======================================================= */
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
-
-  const handleExportReel = async () => {
-    const canvas = canvasRef.current;
-    if (!canvas || slides.length === 0) {
-      setEditorError("Please ensure you have at least 1 photo slide to export.");
-      return;
-    }
-
-    setEditorError(null);
-    setIsExporting(true);
-    setIsPlaying(false);
-    setExportProgress(10);
-
-    try {
-      // 1. Capture Canvas Video Stream
-      const canvasStream = canvas.captureStream(30);
-
-      // 2. Mix Audio Track if soundtrack is active and unmuted
-      let mixedStream: MediaStream = canvasStream;
-      let exportAudioEl: HTMLAudioElement | null = null;
-      let audioCtx: AudioContext | null = null;
-
-      if (audioConfig.trackUrl && !isMuted && audioConfig.volume > 0) {
-        try {
-          const AudioContextClass =
-            window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            audioCtx = new AudioContextClass();
-            if (audioCtx.state === "suspended") {
-              await audioCtx.resume();
-            }
-            const destination = audioCtx.createMediaStreamDestination();
-
-            exportAudioEl = new Audio();
-            if (audioConfig.trackUrl.startsWith("http")) {
-              exportAudioEl.crossOrigin = "anonymous";
-            }
-            exportAudioEl.src = audioConfig.trackUrl;
-            exportAudioEl.currentTime = audioConfig.offset || 0;
-            exportAudioEl.volume = audioConfig.volume;
-
-            const sourceNode = audioCtx.createMediaElementSource(exportAudioEl);
-            sourceNode.connect(destination);
-
-            const audioTracks = destination.stream.getAudioTracks();
-            if (audioTracks.length > 0) {
-              mixedStream = new MediaStream([
-                ...canvasStream.getVideoTracks(),
-                audioTracks[0],
-              ]);
-            }
-          }
-        } catch (audioErr) {
-          console.warn("Audio mixing warning (continuing video export):", audioErr);
-        }
-      }
-
-      // 3. Setup MediaRecorder with best supported mime
-      let mimeType = "video/webm";
-      let fileExt = "webm";
-      if (typeof MediaRecorder !== "undefined") {
-        if (MediaRecorder.isTypeSupported("video/mp4;codecs=avc1,mp4a.40.2")) {
-          mimeType = "video/mp4;codecs=avc1,mp4a.40.2";
-          fileExt = "mp4";
-        } else if (MediaRecorder.isTypeSupported("video/mp4")) {
-          mimeType = "video/mp4";
-          fileExt = "mp4";
-        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")) {
-          mimeType = "video/webm;codecs=vp9,opus";
-          fileExt = "webm";
-        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
-          mimeType = "video/webm;codecs=vp9";
-          fileExt = "webm";
-        } else if (MediaRecorder.isTypeSupported("video/webm")) {
-          mimeType = "video/webm";
-          fileExt = "webm";
-        }
-      }
-
-      const mediaRecorder = new MediaRecorder(mixedStream, {
-        mimeType,
-        videoBitsPerSecond: 8000000,
-      });
-
-      const recordedChunks: Blob[] = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          recordedChunks.push(e.data);
-        }
-      };
-
-      const recordPromise = new Promise<Blob>((resolve) => {
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(recordedChunks, {
-            type: mimeType.includes("mp4") ? "video/mp4" : "video/webm",
-          });
-          resolve(blob);
-        };
-      });
-
-      if (audioCtx && audioCtx.state === "suspended") {
-        await audioCtx.resume();
-      }
-
-      if (exportAudioEl) {
-        try {
-          await exportAudioEl.play();
-        } catch {}
-      }
-
-      mediaRecorder.start();
-
-      const fps = 30;
-      const totalFrames = Math.ceil(totalDuration * fps);
-      for (let f = 0; f <= totalFrames; f++) {
-        const renderTime = f / fps;
-        drawFrame(renderTime);
-        setExportProgress(Math.round((f / totalFrames) * 85));
-        await new Promise((res) => setTimeout(res, 1000 / fps));
-      }
-
-      mediaRecorder.stop();
-      if (exportAudioEl) {
-        exportAudioEl.pause();
-      }
-      if (audioCtx) {
-        audioCtx.close().catch(() => {});
-      }
-
-      const finalBlob = await recordPromise;
-      setExportProgress(95);
-
-      const videoUrl = URL.createObjectURL(finalBlob);
-
-      // 4. Capture first slide as high-res thumbnail
-      drawFrame(0.1);
-      const thumbUrl = canvas.toDataURL("image/jpeg", 0.85);
-
-      // 5. Trigger instant download
-      const dlLink = document.createElement("a");
-      dlLink.href = videoUrl;
-      dlLink.download = `${projectTitle.toLowerCase().replace(/\s+/g, "_")}.${fileExt}`;
-      document.body.appendChild(dlLink);
-      dlLink.click();
-      document.body.removeChild(dlLink);
-
-      // 6. Save to Reel Library state
-      const savedReel = {
-        id: `reel-${Date.now()}`,
-        title: projectTitle,
-        category,
-        durationSeconds: Math.round(totalDuration),
-        resolution: "1080x1920 (9:16)",
-        videoUrl,
-        thumbnailUrl: thumbUrl,
-        createdAt: "Just now",
-        viewsCount: "1",
-        status: "ready" as const,
-        productPrice: `₹${Number(
-          overlays.price.replace(/[^0-9]/g, "") || 0
-        ).toLocaleString("en-IN")}`,
-      };
-
-      onSaveToLibrary(savedReel);
-      setIsExporting(false);
-    } catch {
-      setEditorError("Export failed. Please try again.");
-      setIsExporting(false);
-    }
-  };
-
   const selectedSlide: ImageSlide =
     slides.length > 0
       ? slides[Math.min(selectedSlideIndex, slides.length - 1)] || slides[0]
@@ -1307,26 +1116,19 @@ export default function ReelImageEditorWorkspace({
           <button
             type="button"
             className="workspace-export-btn"
-            onClick={handleExportReel}
-            disabled={isExporting || slides.length === 0}
-            title="Export 9:16 MP4 Reel"
+            disabled={!photoReelExportStatus.enabled}
+            aria-describedby="photo-reel-export-notice"
+            title={photoReelExportStatus.reason}
           >
-            {isExporting ? (
-              <>
-                <Film className="w-4 h-4 animate-spin text-[#ff681b]" />
-                <span className="btn-label-desktop">RENDERING ({exportProgress}%)...</span>
-                <span className="btn-label-mobile">{exportProgress}%</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-4 h-4" />
-                <span className="btn-label-desktop">EXPORT REEL (MP4)</span>
-                <span className="btn-label-mobile">EXPORT</span>
-              </>
-            )}
+            <span className="btn-label-desktop">EXPORT UNAVAILABLE</span>
+            <span className="btn-label-mobile">UNAVAILABLE</span>
           </button>
         </div>
       </header>
+
+      <p id="photo-reel-export-notice" className="workspace-export-notice" role="status">
+        {photoReelExportStatus.reason}
+      </p>
 
       {/* MOBILE SEGMENTED VIEW BAR (<768px) */}
       <nav className="workspace-mobile-tab-bar" aria-label="Editor Panels">
