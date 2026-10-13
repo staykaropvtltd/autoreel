@@ -48,6 +48,7 @@ export default function AuthPage({
   // States
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [googleClientConfigured, setGoogleClientConfigured] = useState(false);
 
@@ -129,6 +130,7 @@ export default function AuthPage({
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    setResetNotice(null);
     setIsLoading(true);
 
     try {
@@ -439,7 +441,7 @@ export default function AuthPage({
                   <button
                     type="button"
                     onClick={() =>
-                      alert("Password reset instructions sent to your email.")
+                      setResetNotice("Password reset is not available yet.")
                     }
                     className={`transition-colors cursor-pointer ${
                       isLight
@@ -449,6 +451,20 @@ export default function AuthPage({
                   >
                     Forgot password?
                   </button>
+                </div>
+              )}
+
+              {resetNotice && (
+                <div
+                  role="alert"
+                  className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                    isLight
+                      ? "bg-amber-50 border border-amber-200 text-amber-800"
+                      : "bg-amber-950/40 border border-amber-800/60 text-amber-200"
+                  }`}
+                >
+                  <span>ℹ️</span>
+                  <span>{resetNotice}</span>
                 </div>
               )}
 
