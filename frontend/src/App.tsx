@@ -356,7 +356,7 @@ export default function App() {
         analysisRunning: analysisRunning.current,
         generationRunning: generationRunning.current,
         hasAnalysis: !!analysisJobId && !!analysisSummary,
-        hasPlan: !!analysisJobId && !!reelPlan && planClips.length > 0,
+        hasPlan: !!analysisJobId && !!reelPlan,
         hasGeneratedReel: !!reel,
       });
       if (isWorkflowRoute(requested) && !workflowAvailable) {
@@ -374,7 +374,7 @@ export default function App() {
       window.removeEventListener("hashchange", handleRoute);
       window.removeEventListener("popstate", handleRoute);
     };
-  }, [authLoading, isAuthenticated, analysisJobId, analysisSummary, reelPlan, planClips.length, reel]);
+  }, [authLoading, isAuthenticated, analysisJobId, analysisSummary, reelPlan, reel]);
 
 
   /* =========================================================
@@ -1085,7 +1085,10 @@ const handleContinueToPlan = async () => {
           const returnTo = authRoute.type === "auth" ? safeReturnDestination(new URLSearchParams(window.location.hash.split("?")[1] || "").get("returnTo")) : null;
           if (authRoute.type === "auth" && authRoute.workflowRecovery) setError(WORKFLOW_RECOVERY_MESSAGE);
           if (returnTo === "studio") setScreen("upload");
-          else navigateToDashboard();
+          else {
+            setScreen("dashboard");
+            window.scrollTo({ top: 0, behavior: "instant" });
+          }
         }}
 
         onBackToHome={

@@ -6,13 +6,13 @@ import type {
   ReelPlan,
   ReelResult,
   UploadResponse,
-} from "./types";
-import { waitForReelResult } from "./reelPolling";
-import type { ReelJobStatus } from "./reelPolling";
-export type { ReelJobStatus } from "./reelPolling";
+} from "./types.ts";
+import { waitForReelResult } from "./reelPolling.ts";
+import type { ReelJobStatus } from "./reelPolling.ts";
+export type { ReelJobStatus } from "./reelPolling.ts";
 
 const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL 
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) || ""
 ).replace(/\/+$/, "");
 
 const api = axios.create({
@@ -28,9 +28,6 @@ export function apiErrorMessage(
   error: unknown,
   fallback: string
 ): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
   if (isAxiosError(error)) {
     if (!error.response) {
       return "Unable to connect to the server. Check your connection and try again.";
@@ -47,6 +44,11 @@ export function apiErrorMessage(
     ) {
       return detail;
     }
+    return fallback;
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
   }
 
   return fallback;

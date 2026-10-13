@@ -767,7 +767,7 @@ const playClipPreview = (index: number) => {
       });
       const clips = summary.clips;
       setAnalyzedClips(clips);
-      setSelectedClipIds(clips.map((clip) => clip.clip_id));
+      setSelectedClipIds(clips.filter((clip) => clip.selected).map((clip) => clip.clip_id));
       if (clips.length === 0) {
         setError("Analysis completed, but no usable clips were found. Try different footage and analyze again.");
       }
@@ -1453,7 +1453,7 @@ setReelPlaybackError(false);
     </h3>
 
     <p className="text-xs text-[var(--db-muted)] mt-1">
-  {selectedClipIds.length} of {analyzedClips.length} clips selected
+  {selectedClipIds.length} of {analyzedClips.length} clips selected · Content budget: {Math.max(0, targetDuration - (templateId ? 10 : 9))}s of {targetDuration}s total
 </p>
   </div>
 

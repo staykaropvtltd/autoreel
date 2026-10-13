@@ -300,6 +300,17 @@ def test_download_reel_unknown_id_returns_404():
     assert response.status_code == 404
 
 
+def test_download_reel_job_without_output_path_returns_404():
+    from app.core.job_store import create_reel_job
+
+    reel_id = str(uuid.uuid4())
+    create_reel_job(reel_id, request_id=f"pending-{reel_id}")
+
+    response = client.get(f"/api/reels/{reel_id}/download")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Reel file not found"
+
+
 def test_generate_reel_with_analysis_job_id_resolves_source_dir(
     synthetic_video_with_audio: Path, monkeypatch, tmp_path: Path
 ):
@@ -482,6 +493,38 @@ def test_plan_reel_rejects_selection_that_cannot_fit_target_duration(tmp_path: P
     )
     assert response.status_code == 422
     assert "do not fit" in response.json()["detail"]
+
+
+def test_plan_reel_rejects_selected_clip_shorter_than_min_clip_duration(tmp_path: Path):
+    from app.core.job_store import create_analysis_job, update_analysis_job
+    from app.schemas.batch import BatchAnalysisResult, BatchClip
+
+    job_id = "00000000-0000-0000-0000-000000000154"
+    # Clip with duration 0.3s is below default min_clip_duration (0.5s)
+    clips = [
+        BatchClip(**_batch_clip_payload("video-short.mp4", 0.0, 0.3, 85))
+    ]
+    result = BatchAnalysisResult(
+        batch_id="short-clip-test",
+        input_video_count=1,
+        total_segments=1,
+        accepted_before_dedupe=1,
+        duplicates_removed=0,
+        final_selected_count=1,
+        processing_time_seconds=0.1,
+        selected_clips=clips,
+        all_clips=clips,
+    )
+    create_analysis_job(job_id, source_dir=tmp_path)
+    update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
+    clip_ids = [clip["clip_id"] for clip in client.get(f"/api/analysis/{job_id}").json()["clips"]]
+
+    response = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "selected_clip_ids": clip_ids, "target_duration": 15.0},
+    )
+    assert response.status_code == 422
+    assert "shorter than the minimum clip duration" in response.json()["detail"]
 
 
 def test_plan_reel_estimate_accounts_for_registered_template(monkeypatch, tmp_path: Path):

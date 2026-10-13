@@ -57,6 +57,7 @@ from app.services.reel_editor_renderer import compose_reel_from_editor_plan
 from app.services.product_end_card import END_CARD_DURATION
 from app.services.reel_duration import get_template_duration_seconds
 from app.services.reel_planner import (
+    DEFAULT_MIN_CLIP_DURATION,
     PlanningConfig,
     extend_plan_for_transitions,
     plan_reel,
@@ -167,7 +168,7 @@ class PlanReelRequest(BaseModel):
         allow_inf_nan=False,
         description="Requested total output duration including all rendered segments.",
     )
-    min_clip_duration: float = Field(default=1.0, gt=0.0, le=60.0, allow_inf_nan=False)
+    min_clip_duration: float = Field(default=DEFAULT_MIN_CLIP_DURATION, gt=0.0, le=60.0, allow_inf_nan=False)
     max_clip_duration: float = Field(default=8.0, gt=0.0, le=60.0, allow_inf_nan=False)
     min_quality_score: float = Field(default=50.0, ge=0.0, le=100.0, allow_inf_nan=False)
 
@@ -435,6 +436,18 @@ def create_reel_plan(request: PlanReelRequest) -> ReelPlan:
     if request.selected_clip_ids is not None:
         planned_clip_ids = {clip.clip_id for clip in reel_plan.clips}
         if planned_clip_ids != set(request.selected_clip_ids):
+            short_clips = [
+                c for c in candidate_pool
+                if c.duration < config.min_clip_duration
+            ]
+            if short_clips:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"One or more selected clips are shorter than the minimum clip duration "
+                        f"({config.min_clip_duration}s). Choose clips that meet the duration requirement."
+                    ),
+                )
             raise HTTPException(
                 status_code=422,
                 detail="The selected clips do not fit the target duration. Choose fewer clips or increase the target duration.",
@@ -908,7 +921,10 @@ def download_reel(
     reel_id = str(reel_id)
     job = get_reel_job(reel_id)
     if job is not None:
-        output_path = Path(job["output_path"]).resolve()
+        stored_path = job.get("output_path")
+        if not stored_path:
+            raise HTTPException(status_code=404, detail="Reel file not found")
+        output_path = Path(stored_path).resolve()
         if not output_path.is_relative_to(OUTPUTS_DIR.resolve()):
             logger.warning("Rejected reel output outside storage for reel_id=%s", reel_id)
             raise HTTPException(status_code=404, detail="Reel file not found")
