@@ -627,6 +627,33 @@ def test_generate_reel_from_plan_end_to_end(synthetic_video_with_audio: Path, mo
     assert body["duration_status"] == reel_plan["duration_status"]
 
 
+def test_generate_reel_accepts_planned_clip_with_float_imprecision(tmp_path: Path):
+    job_id = "00000000-0000-0000-0000-000000000109"
+    _completed_analysis_job_with_clips(job_id, tmp_path)
+
+    plan_response = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "target_duration": 15.0},
+    )
+    assert plan_response.status_code == 200
+    reel_plan = plan_response.json()
+    # Apply slight float imprecision within 1e-6 tolerance
+    reel_plan["clips"][0]["planned_end"] += 5e-7
+
+    response = client.post(
+        "/api/reels/generate",
+        json={
+            "reel_plan": reel_plan,
+            "analysis_job_id": job_id,
+            "selected_clip_ids": [reel_plan["clips"][0]["clip_id"]],
+            "brand": {"text": None},
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+
+
+
 # --- Phase 8: editor plan (transitions, branding, product overlays, thumbnails) ---
 
 

@@ -183,6 +183,8 @@ export default function App() {
 
   const planRequestId =
     useRef(0);
+  const generationRequestId = useRef<string | null>(null);
+  const updateRequestId = useRef<string | null>(null);
 
 
   /* =========================================================
@@ -512,6 +514,9 @@ export default function App() {
 
     setReel(null);
 
+    generationRequestId.current = null;
+    updateRequestId.current = null;
+
     setError(null);
   };
 
@@ -840,6 +845,10 @@ const handleContinueToPlan = async () => {
           "rendering"
         );
 
+        if (!generationRequestId.current) {
+          generationRequestId.current = crypto.randomUUID();
+        }
+
         const result =
           await generateReel({
             reel_plan:
@@ -854,7 +863,9 @@ const handleContinueToPlan = async () => {
                 : stage === "finalizing" || stage === "completed" ? "complete"
                   : stage,
             );
-          });
+          }, generationRequestId.current);
+
+        generationRequestId.current = null;
 
         setGenerationStage(
           "complete"
@@ -1011,6 +1022,10 @@ const handleContinueToPlan = async () => {
       setGenerating(true);
 
       try {
+        if (!updateRequestId.current) {
+          updateRequestId.current = crypto.randomUUID();
+        }
+
         const result =
           await generateReel({
             reel_plan:
@@ -1025,7 +1040,9 @@ const handleContinueToPlan = async () => {
                 : stage === "finalizing" || stage === "completed" ? "complete"
                   : stage,
             );
-          });
+          }, updateRequestId.current);
+
+        updateRequestId.current = null;
 
         setReel(result);
       } catch (err) {

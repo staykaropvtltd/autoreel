@@ -603,8 +603,8 @@ def _generate_reel_blocking(
                 or abs(planned_clip.original_start - source_clip.start_time) > 1e-6
                 or abs(planned_clip.original_end - source_clip.end_time) > 1e-6
                 or planned_clip.score != source_clip.score
-                or planned_clip.planned_start < source_clip.start_time
-                or planned_clip.planned_end > source_clip.end_time
+                or planned_clip.planned_start < source_clip.start_time - 1e-6
+                or planned_clip.planned_end > source_clip.end_time + 1e-6
             ):
                 raise HTTPException(status_code=422, detail="The reel plan contains clip metadata that does not match the analysis")
 

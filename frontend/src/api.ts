@@ -121,11 +121,12 @@ export interface GenerateReelPayload {
 export async function generateReel(
   payload: GenerateReelPayload,
   onStage?: (stage: ReelJobStatus["stage"]) => void,
+  requestId?: string,
 ): Promise<ReelResult> {
-  const requestId = crypto.randomUUID();
+  const effectiveRequestId = requestId || crypto.randomUUID();
   const accepted = await api.post<{ reel_id: string; status: "queued" }>(
     "/reels/generate",
-    { ...payload, request_id: requestId },
+    { ...payload, request_id: effectiveRequestId },
     { timeout: 30000 }
   );
   const data = await waitForReelResult(

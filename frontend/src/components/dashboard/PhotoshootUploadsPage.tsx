@@ -295,6 +295,7 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
   const analysisControllerRef = useRef<AbortController | null>(null);
   const analysisRunningRef = useRef(false);
   const generationRunningRef = useRef(false);
+  const generationRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => () => analysisControllerRef.current?.abort(), []);
 
@@ -327,6 +328,7 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
       setGeneratedReelId(null);
       setIsSavedToLibrary(false);
       setCurrentStep(1);
+      generationRequestIdRef.current = null;
     }
     setError(null);
   };
@@ -871,6 +873,10 @@ const finalClips = initialPlan.clips;
     setCurrentStep(4);
     setStepLabel("Rendering final commercial reel...");
 
+    if (!generationRequestIdRef.current) {
+      generationRequestIdRef.current = crypto.randomUUID();
+    }
+
     const result = await generateReel({
   reel_plan: planToGenerate,
   analysis_job_id: analysisJobId,
@@ -885,7 +891,9 @@ const finalClips = initialPlan.clips;
     failed: "Reel rendering failed.",
   } as const;
   setStepLabel(stageLabels[stage]);
-});
+}, generationRequestIdRef.current);
+
+generationRequestIdRef.current = null;
 
 if (!result.reel_id || !result.download_url) {
   throw new Error("The server did not return the final reel file. Please retry generation.");
