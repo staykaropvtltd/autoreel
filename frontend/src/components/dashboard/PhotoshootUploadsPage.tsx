@@ -699,29 +699,60 @@ const playClipPreview = (index: number) => {
 
       let attempts = 0;
       let done = false;
-      while (!done && attempts < 40) {
-        await new Promise((res) => setTimeout(res, 1200));
+      let consecutiveTransientErrors = 0;
+      let pollDelay = 1000;
+      const pollStartTime = Date.now();
+      const MAX_POLL_DURATION_MS = 10 * 60 * 1000; // 10 minutes max
+
+      while (!done) {
+        if (Date.now() - pollStartTime > MAX_POLL_DURATION_MS) {
+          throw new Error("Footage analysis timed out after 10 minutes. Please try again.");
+        }
+
+        await new Promise((res) => setTimeout(res, pollDelay));
+        pollDelay = Math.min(Math.round(pollDelay * 1.25), 4000);
         attempts++;
-        const summary = await getAnalysis(activeJobId);
 
-if (summary.status === "completed") {
-  const clips = summary.clips ?? [];
+        let summary;
+        try {
+          summary = await getAnalysis(activeJobId);
+          consecutiveTransientErrors = 0;
+        } catch (fetchErr: any) {
+          consecutiveTransientErrors++;
+          if (consecutiveTransientErrors >= 3) {
+            throw new Error(
+              fetchErr?.response?.data?.detail ||
+              fetchErr?.message ||
+              "Network error while checking footage analysis status."
+            );
+          }
+          continue;
+        }
 
-  setAnalyzedClips(clips);
+        if (summary.status === "completed") {
+          const clips = summary.clips ?? [];
+          if (clips.length === 0) {
+            throw new Error("Analysis completed but no usable clips were found.");
+          }
 
-  // Select all clips by default
-  setSelectedClipIndexes(clips.map((_, index) => index));
+          setAnalyzedClips(clips);
 
-  done = true;
-} else if (summary.status === "failed") {
-  throw new Error(summary.error || "Footage analysis failed.");
-}
+          // Select all clips by default
+          setSelectedClipIndexes(clips.map((_, index) => index));
+
+          done = true;
+        } else if (summary.status === "failed") {
+          throw new Error(summary.error || "Footage analysis failed.");
+        }
       }
 
-      
+      if (!done) {
+        throw new Error("Analysis did not complete.");
+      }
+
       setIsGenerating(false);
-setCurrentStep(3);
-setStepLabel("Select the clips you want to include in your reel.");
+      setCurrentStep(3);
+      setStepLabel("Select the clips you want to include in your reel.");
 
     } catch (err: any) {
       console.error("Reel generation error:", err);
