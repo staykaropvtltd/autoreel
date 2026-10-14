@@ -5,6 +5,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from app.core.storage import OUTPUTS_DIR
+from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal
 from app.services.music_service import resolve_music_track

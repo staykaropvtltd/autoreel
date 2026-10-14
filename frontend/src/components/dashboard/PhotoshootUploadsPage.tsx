@@ -451,16 +451,31 @@ const handleBrandLogoUpload = async (
   /* ─────────────────────────────────────────────── */
   /*  Load backend track catalogue                   */
   /* ─────────────────────────────────────────────── */
-  useEffect(() => {
-    listMusic()
-      .then((tracks) => {
-        setBackendTracks(tracks);
-        if (tracks.length > 0) {
-          setSelectedTrack(tracks[0]);
-        }
-      })
-      .catch(() => setBackendTracks([]));
-  }, []);
+  
+useEffect(() => {
+  listMusic()
+    .then((response) => {
+      // Support either a direct array or a wrapped API response.
+      const tracks = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.tracks)
+        ? response.tracks
+        : Array.isArray(response?.data)
+        ? response.data
+        : [];
+
+      setBackendTracks(tracks);
+
+      if (tracks.length > 0) {
+        setSelectedTrack(tracks[0]);
+      }
+    })
+    .catch((error) => {
+      console.error("Failed to load music catalogue:", error);
+      setBackendTracks([]);
+    });
+}, []);
+
 
   /* ─────────────────────────────────────────────── */
   /*  Sync cut window end when target duration changes*/

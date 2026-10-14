@@ -165,10 +165,7 @@ export function reelFileUrl(reelId: string): string {
   return `${API_BASE}/reels/${reelId}/download`;
 }
 
-export async function listMusic(): Promise<MusicTrack[]> {
-  const response = await api.get<MusicTrack[]>("/music");
-  return response.data;
-}
+
 
 export function musicPreviewUrl(trackId: string): string {
   return `${API_BASE}/music/${trackId}/preview`;
@@ -190,4 +187,30 @@ export async function uploadBrandLogo(
   formData.append("placement", placement);
 
   await api.post("/branding/logo", formData);
+}
+
+export async function listMusic(): Promise<MusicTrack[]> {
+  const response = await api.get("/music");
+
+  const data = response.data;
+
+  // Handle the supported API response formats.
+  if (Array.isArray(data)) {
+    return data as MusicTrack[];
+  }
+
+  if (data && typeof data === "object") {
+    const wrapped = data as Record<string, unknown>;
+
+    if (Array.isArray(wrapped.tracks)) {
+      return wrapped.tracks as MusicTrack[];
+    }
+
+    if (Array.isArray(wrapped.data)) {
+      return wrapped.data as MusicTrack[];
+    }
+  }
+
+  console.error("Unexpected /music API response:", data);
+  return [];
 }
