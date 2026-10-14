@@ -328,6 +328,10 @@ export default function AudioWaveformCutter({
     const checkEnd = () => {
       if (!audioRef.current) return;
       const playhead = audioRef.current.currentTime;
+      const playheadFrac =
+        ((playhead - clampedStart) / targetDuration) *
+          ((clampedStart + targetDuration) / sourceDuration - clampedStart / sourceDuration) +
+        clampedStart / sourceDuration;
 
       drawWaveform(Math.min(1, Math.max(0, playhead / sourceDuration)));
 

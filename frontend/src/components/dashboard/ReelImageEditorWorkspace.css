@@ -189,6 +189,17 @@
   cursor: not-allowed;
 }
 
+.workspace-export-notice {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 24px;
+  background: rgba(255, 190, 80, 0.08);
+  border-bottom: 1px solid rgba(255, 190, 80, 0.16);
+  color: #e8c991;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* =========================================================
    MAIN 3-COLUMN WORKSPACE BODY
    ========================================================= */

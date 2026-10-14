@@ -6,10 +6,13 @@ import type {
   ReelPlan,
   ReelResult,
   UploadResponse,
-} from "./types";
+} from "./types.ts";
+import { waitForReelResult } from "./reelPolling.ts";
+import type { ReelJobStatus } from "./reelPolling.ts";
+export type { ReelJobStatus } from "./reelPolling.ts";
 
 const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL 
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) || ""
 ).replace(/\/+$/, "");
 
 const api = axios.create({
@@ -41,35 +44,62 @@ export function apiErrorMessage(
     ) {
       return detail;
     }
+    return fallback;
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
   }
 
   return fallback;
 }
 
-export async function uploadVideos(files: File[]): Promise<UploadResponse> {
+export async function uploadVideos(files: File[], signal?: AbortSignal): Promise<UploadResponse> {
   const form = new FormData();
   files.forEach((file) => form.append("files", file));
 
-  const response = await api.post<UploadResponse>("/videos/upload", form);
+  const response = await api.post<UploadResponse>("/videos/upload", form, { signal });
   return response.data;
+}
+
+export async function uploadTemplateImage(
+  file: File,
+  signal?: AbortSignal,
+): Promise<{ template_id: string; status: "uploaded"; filename: string; size: number }> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await api.post<{ template_id: string; status: "uploaded"; filename: string; size: number }>(
+    "/templates/upload",
+    form,
+    { signal },
+  );
+  return response.data;
+}
+
+export async function deleteTemplateImage(templateId: string): Promise<void> {
+  await api.delete(`/templates/${encodeURIComponent(templateId)}`);
 }
 
 export async function startAnalysis(params: {
   job_id?: string;
   use_demo?: boolean;
   template_id?: string;
-}): Promise<{ job_id: string; status: string }> {
-  const response = await api.post("/analysis/analyze", params);
+}, signal?: AbortSignal): Promise<{ job_id: string; status: string }> {
+  const response = await api.post("/analysis/analyze", params, { signal });
   return response.data;
 }
 
-export async function getAnalysis(jobId: string): Promise<AnalysisSummary> {
-  const response = await api.get<AnalysisSummary>(`/analysis/${jobId}`);
+export async function getAnalysis(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<AnalysisSummary> {
+  const response = await api.get<AnalysisSummary>(`/analysis/${jobId}`, { signal });
   return response.data;
 }
 
 export interface PlanReelPayload {
   analysis_job_id: string;
+  selected_clip_ids?: string[];
   target_duration: number;
   min_clip_duration?: number;
   max_clip_duration?: number;
@@ -84,20 +114,25 @@ export async function planReel(payload: PlanReelPayload): Promise<ReelPlan> {
 export interface GenerateReelPayload {
   reel_plan: ReelPlan;
   analysis_job_id: string;
+  selected_clip_ids?: string[];
   output_filename?: string;
 }
 
 export async function generateReel(
-  payload: GenerateReelPayload
+  payload: GenerateReelPayload,
+  onStage?: (stage: ReelJobStatus["stage"]) => void,
+  requestId?: string,
 ): Promise<ReelResult> {
-  const response = await api.post<ReelResult>(
+  const effectiveRequestId = requestId || crypto.randomUUID();
+  const accepted = await api.post<{ reel_id: string; status: "queued" }>(
     "/reels/generate",
-    payload,
-    { timeout: 120000 }
+    { ...payload, request_id: effectiveRequestId },
+    { timeout: 30000 }
   );
-
-  const data = response.data;
-
+  const data = await waitForReelResult(
+    async () => (await api.get<ReelJobStatus>(`/reels/${accepted.data.reel_id}`)).data,
+    onStage,
+  );
   return {
     ...data,
     download_url: data.download_url.startsWith("http")
@@ -106,18 +141,18 @@ export async function generateReel(
   };
 }
 
-export async function getCredits(): Promise<{ credits: number }> {
-  const response = await api.get<{ credits: number }>("/credits");
+export async function getCredits(signal?: AbortSignal): Promise<{ user_id: string; credits: number }> {
+  const response = await api.get<{ user_id: string; credits: number }>("/credits", { signal });
   return response.data;
 }
 
-export async function getReelCost(): Promise<{ cost: number }> {
-  const response = await api.get<{ cost: number }>("/credits/reel-cost");
+export async function getReelCost(signal?: AbortSignal): Promise<{ cost: number }> {
+  const response = await api.get<{ cost: number }>("/credits/reel-cost", { signal });
   return response.data;
 }
 
-export async function getReelStatus(reelId: string): Promise<ReelResult> {
-  const response = await api.get<ReelResult>(`/reels/${reelId}`);
+export async function getReelStatus(reelId: string): Promise<ReelJobStatus> {
+  const response = await api.get<ReelJobStatus>(`/reels/${reelId}`);
   return response.data;
 }
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { parseGoogleJwt } from "../services/googleAuth";
 
 export interface User {
@@ -23,34 +23,16 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const USER_STORAGE_KEY = "kaladhar_user";
+const LEGACY_USER_STORAGE_KEY = "kaladhar_user";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Initialize from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(USER_STORAGE_KEY);
-      if (stored) {
-        setUser(JSON.parse(stored));
-      }
-    } catch {
-      localStorage.removeItem(USER_STORAGE_KEY);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const persistUser = (newUser: User | null) => {
+  const setSessionUser = (newUser: User | null) => {
     setUser(newUser);
-    if (newUser) {
-      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(newUser));
-    } else {
-      localStorage.removeItem(USER_STORAGE_KEY);
-    }
+    setIsAuthenticated(!!newUser);
   };
 
   const loginWithEmail = async (email: string, _password: string) => {
@@ -66,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       provider: "email",
       avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(formattedName)}&backgroundColor=18181b,27272a&textColor=ffffff`,
     };
-    persistUser(authenticatedUser);
+    setSessionUser(authenticatedUser);
     setIsLoading(false);
   };
 
@@ -81,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       brandName: brandName?.trim() || undefined,
       avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}&backgroundColor=18181b,27272a&textColor=ffffff`,
     };
-    persistUser(newUser);
+    setSessionUser(newUser);
     setIsLoading(false);
   };
 
@@ -97,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       avatar: "https://lh3.googleusercontent.com/a/default-user=s96-c",
       brandName: "Ethnic Studio",
     };
-    persistUser(googleUser);
+    setSessionUser(googleUser);
     setIsLoading(false);
   };
 
@@ -118,25 +100,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(payload.name)}&backgroundColor=18181b,27272a&textColor=ffffff`,
       brandName: payload.given_name ? `${payload.given_name}'s Studio` : "Kaladhar Studio",
     };
-    persistUser(googleUser);
+    setSessionUser(googleUser);
     setIsLoading(false);
   };
 
   const logout = () => {
-    persistUser(null);
+    setSessionUser(null);
+    localStorage.removeItem(LEGACY_USER_STORAGE_KEY);
   };
 
   const updateBrandName = (brandName: string) => {
     if (!user) return;
     const updated = { ...user, brandName };
-    persistUser(updated);
+    setSessionUser(updated);
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        isAuthenticated: !!user,
+        isAuthenticated,
         isLoading,
         loginWithEmail,
         signupWithEmail,

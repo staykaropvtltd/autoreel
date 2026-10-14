@@ -20,6 +20,13 @@ function scoreColor(score: number): string {
   return "text-[var(--color-error)] border-[var(--color-error)]/40 bg-[var(--color-error)]/10";
 }
 
+const STATUS_LABEL: Record<string, string> = {
+  selected: "Selected",
+  rejected_low_quality: "Low quality",
+  rejected_duplicate: "Duplicate",
+  rejected_not_selected: "Not selected",
+};
+
 export default function ClipCard({
   clip,
   file,

@@ -653,7 +653,9 @@ def test_whole_duration_and_full_end_card_with_optional_segments(
         template_path = tmp_path / "template.png"
         Image.new("RGB", (108, 192), color=(0, 0, 220)).save(template_path)
 
-    template_seconds = 0.5 if with_template else 0.0
+    from app.services.reel_duration import get_template_duration_seconds
+
+    template_seconds = get_template_duration_seconds() if with_template else 0.0
     intro_seconds = 2.0 if with_bumpers else 0.0
     outro_seconds = 2.0 if with_bumpers else 0.0
     target = 14.0
@@ -707,6 +709,11 @@ def test_whole_duration_and_full_end_card_with_optional_segments(
         template_frame = _extract_frames(tmp_path / "out.mp4", [0.25])[0]
         center_bgr = template_frame[540, 540].astype(int)
         assert center_bgr[0] > 180 and center_bgr[1] < 50 and center_bgr[2] < 50
+        assert template_seconds <= 1.0
+        content_or_bumper_frame = _extract_frames(
+            tmp_path / "out.mp4", [template_seconds + 0.25]
+        )[0]
+        assert not (content_or_bumper_frame[540, 540] == template_frame[540, 540]).all()
 
 
 def test_insufficient_footage_keeps_the_full_end_card_and_reports_short_output(

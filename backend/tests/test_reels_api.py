@@ -3,6 +3,7 @@ from urllib import response
 
 import pytest
 import uuid
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.api import reels
@@ -14,10 +15,21 @@ from app.services import credit_service
 
 
 @pytest.fixture(autouse=True)
-def reset_demo_credits():
+def reset_demo_credits(monkeypatch):
     """Give each test a fresh demo credit account."""
     with credit_service._lock:
         credit_service._credit_accounts.pop(reels.DEMO_USER_ID, None)
+    # Keep existing rendering/API tests deterministic; the queued-worker path
+    # has separate tests that hold and release the executor task explicitly.
+    monkeypatch.setattr(reels._REEL_EXECUTOR, "submit", lambda fn, *args: fn(*args))
+
+
+def _generate_result(payload: dict) -> tuple[dict, dict]:
+    accepted = client.post("/api/reels/generate", json=payload)
+    assert accepted.status_code == 202
+    receipt = accepted.json()
+    status = client.get(f"/api/reels/{receipt['reel_id']}").json()
+    return receipt, status
 
 
 
@@ -42,20 +54,52 @@ def _batch_clip_payload(source_file: str, start: float, end: float, score: int) 
     }
 
 
-def test_generate_reel_rejects_empty_selection():
-    response = client.post("/api/reels/generate", json={"selected_clips": []})
+def test_browser_rendered_reel_import_is_disabled_without_charging_or_persisting(
+    monkeypatch, tmp_path: Path
+):
+    output_dir = tmp_path / "outputs"
+    monkeypatch.setattr(reels, "OUTPUTS_DIR", output_dir)
+    deductions: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        reels,
+        "deduct_credits",
+        lambda user_id, amount: deductions.append((user_id, amount)),
+    )
 
-    assert response.status_code == 400
-    assert "empty" in response.json()["detail"].lower()
+    response = client.post(
+        "/api/reels/import",
+        files={"file": ("browser-render.mp4", b"untrusted browser output", "video/mp4")},
+    )
+
+    assert response.status_code == 410
+    assert "credit-accounted server pipeline" in response.json()["detail"].lower()
+    assert deductions == []
+    assert not output_dir.exists()
+
+
+def test_generate_reel_rejects_empty_selection():
+    receipt, status = _generate_result({"selected_clips": []})
+    assert status["reel_id"] == receipt["reel_id"]
+    assert status["status"] == "failed"
+    assert "empty" in status["error"].lower()
+
+
+def test_generate_reel_returns_available_and_required_credits(monkeypatch):
+    def insufficient_credits(_user_id: str, _amount: int) -> int:
+        raise ValueError("Insufficient credits. Available: 3, required: 10")
+
+    monkeypatch.setattr(reels, "deduct_credits", insufficient_credits)
+    _, status = _generate_result({})
+    assert status["status"] == "failed"
+    assert status["error"] == "Insufficient credits. Available: 3, required: 10"
 
 
 def test_generate_reel_rejects_missing_source_video():
     payload = {"selected_clips": [_batch_clip_payload("does_not_exist.mp4", 0.0, 3.0, 90)]}
 
-    response = client.post("/api/reels/generate", json=payload)
-
-    assert response.status_code == 400
-    assert "not found" in response.json()["detail"].lower()
+    _, status = _generate_result(payload)
+    assert status["status"] == "failed"
+    assert "not found" in status["error"].lower()
 
 
 def test_generate_reel_rejects_path_traversal_filename():
@@ -64,9 +108,8 @@ def test_generate_reel_rejects_path_traversal_filename():
         "output_filename": "../../evil.mp4",
     }
 
-    response = client.post("/api/reels/generate", json=payload)
-
-    assert response.status_code == 400
+    _, status = _generate_result(payload)
+    assert status["status"] == "failed"
 
 
 def test_generate_reel_end_to_end(synthetic_video_with_audio: Path, monkeypatch, tmp_path: Path):
@@ -86,10 +129,9 @@ def test_generate_reel_end_to_end(synthetic_video_with_audio: Path, monkeypatch,
         "brand": {"text": None},
     }
 
-    response = client.post("/api/reels/generate", json=payload)
-
-    assert response.status_code == 200
-    body = response.json()
+    _, status = _generate_result(payload)
+    assert status["status"] == "completed"
+    body = status["result"]
     assert body["width"] == 1080
     assert body["height"] == 1920
     assert body["video_codec"] == "h264"
@@ -120,12 +162,10 @@ def test_generate_reel_returns_reel_id_and_download_url(
         "brand": {"text": None},
     }
 
-    response = client.post("/api/reels/generate", json=payload)
-
-    assert response.status_code == 200
-    body = response.json()
+    receipt, status = _generate_result(payload)
+    body = status["result"]
     assert body["status"] == "completed"
-    assert "reel_id" in body
+    assert receipt["reel_id"] == body["reel_id"]
     assert body["download_url"] == f"/api/reels/{body['reel_id']}/download"
 
 
@@ -144,7 +184,7 @@ def test_get_reel_status(synthetic_video_with_audio: Path, monkeypatch, tmp_path
         "max_total_duration": 5.0,
         "brand": {"text": None},
     }
-    reel_id = client.post("/api/reels/generate", json=payload).json()["reel_id"]
+    reel_id = _generate_result(payload)[0]["reel_id"]
 
     response = client.get(f"/api/reels/{reel_id}")
 
@@ -152,13 +192,72 @@ def test_get_reel_status(synthetic_video_with_audio: Path, monkeypatch, tmp_path
     body = response.json()
     assert body["reel_id"] == reel_id
     assert body["status"] == "completed"
-    assert body["width"] == 1080
+    assert body["result"]["width"] == 1080
 
 
 def test_get_reel_status_unknown_id_returns_404():
     response = client.get(f"/api/reels/{uuid.uuid4()}")
 
     assert response.status_code == 404
+
+
+def test_generation_returns_job_receipt_before_worker_finishes(monkeypatch):
+    submitted = []
+    monkeypatch.setattr(reels._REEL_EXECUTOR, "submit", lambda fn, *args: submitted.append((fn, args)))
+    request_id = str(uuid.uuid4())
+    response = client.post("/api/reels/generate", json={"request_id": request_id})
+
+    assert response.status_code == 202
+    receipt = response.json()
+    assert receipt["status"] == "queued"
+    assert submitted
+    status = client.get(f"/api/reels/{receipt['reel_id']}").json()
+    assert status["status"] == "queued"
+    assert status["result"] is None
+    assert client.get("/api/health").status_code == 200
+    reels._REEL_SLOTS.release()
+
+
+def test_duplicate_generation_request_id_reuses_job_without_second_charge(monkeypatch):
+    deductions = []
+    original_deduct = reels.deduct_credits
+    def count_deduction(user_id, amount):
+        deductions.append((user_id, amount))
+        return original_deduct(user_id, amount)
+    monkeypatch.setattr(reels, "deduct_credits", count_deduction)
+    request_id = str(uuid.uuid4())
+    payload = {"request_id": request_id, "selected_clips": []}
+    first = client.post("/api/reels/generate", json=payload).json()
+    second = client.post("/api/reels/generate", json=payload).json()
+
+    assert first["reel_id"] == second["reel_id"]
+    assert deductions == [(reels.DEMO_USER_ID, reels.REEL_GENERATION_COST)]
+
+
+def test_generation_capacity_rejects_extra_job_without_charging(monkeypatch):
+    assert reels._REEL_SLOTS.acquire(blocking=False)
+    assert reels._REEL_SLOTS.acquire(blocking=False)
+    try:
+        response = client.post("/api/reels/generate", json={})
+    finally:
+        reels._REEL_SLOTS.release()
+        reels._REEL_SLOTS.release()
+    assert response.status_code == 503
+
+
+def test_failed_background_render_removes_partial_output(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(reels, "OUTPUTS_DIR", tmp_path)
+    def fail(_request, reel_id):
+        (tmp_path / f"{reel_id}.mp4").write_bytes(b"partial")
+        raise HTTPException(status_code=500, detail="render failed")
+    monkeypatch.setattr(reels, "_generate_reel_blocking", fail)
+
+    response = client.post("/api/reels/generate", json={})
+    reel_id = response.json()["reel_id"]
+    status = client.get(f"/api/reels/{reel_id}").json()
+    assert status["status"] == "failed"
+    assert status["error"] == "render failed"
+    assert not (tmp_path / f"{reel_id}.mp4").exists()
 
 
 def test_reel_identifier_paths_require_uuid():
@@ -181,19 +280,35 @@ def test_download_reel_returns_video_file(synthetic_video_with_audio: Path, monk
         "max_total_duration": 5.0,
         "brand": {"text": None},
     }
-    reel_id = client.post("/api/reels/generate", json=payload).json()["reel_id"]
+    reel_id = _generate_result(payload)[0]["reel_id"]
 
     response = client.get(f"/api/reels/{reel_id}/download")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "video/mp4"
-    assert len(response.content) > 0
+    output_path = outputs_dir / f"{reel_id}.mp4"
+    assert response.content == output_path.read_bytes()
+
+    output_path.unlink()
+    missing_file_response = client.get(f"/api/reels/{reel_id}/download")
+    assert missing_file_response.status_code == 404
 
 
 def test_download_reel_unknown_id_returns_404():
     response = client.get(f"/api/reels/{uuid.uuid4()}/download")
 
     assert response.status_code == 404
+
+
+def test_download_reel_job_without_output_path_returns_404():
+    from app.core.job_store import create_reel_job
+
+    reel_id = str(uuid.uuid4())
+    create_reel_job(reel_id, request_id=f"pending-{reel_id}")
+
+    response = client.get(f"/api/reels/{reel_id}/download")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Reel file not found"
 
 
 def test_generate_reel_with_analysis_job_id_resolves_source_dir(
@@ -218,10 +333,9 @@ def test_generate_reel_with_analysis_job_id_resolves_source_dir(
         "brand": {"text": None},
     }
 
-    response = client.post("/api/reels/generate", json=payload)
-
-    assert response.status_code == 200
-    assert response.json()["width"] == 1080
+    _, status = _generate_result(payload)
+    assert status["status"] == "completed"
+    assert status["result"]["width"] == 1080
 
 
 # --- Phase 7: story-ordered, duration-target reel planning ---
@@ -277,8 +391,140 @@ def test_plan_reel_returns_story_ordered_plan(tmp_path: Path):
     assert len(body["clips"]) > 0
     assert body["clips"][0]["position"] == 1
     for clip in body["clips"]:
+        assert clip["clip_id"]
         assert "shot_role" in clip
         assert "role_confidence" in clip
+
+
+def test_plan_reel_uses_exact_selected_clip_ids_for_same_source_file(tmp_path: Path):
+    from app.core.job_store import create_analysis_job, update_analysis_job
+    from app.schemas.batch import BatchAnalysisResult, BatchClip
+
+    job_id = "00000000-0000-0000-0000-000000000150"
+    clips = [
+        BatchClip(**_batch_clip_payload("same.mp4", 1.0, 3.0, 90)),
+        BatchClip(**_batch_clip_payload("same.mp4", 5.0, 7.0, 88)),
+    ]
+    result = BatchAnalysisResult(
+        batch_id="same-source-test",
+        input_video_count=1,
+        total_segments=2,
+        accepted_before_dedupe=2,
+        duplicates_removed=0,
+        final_selected_count=2,
+        processing_time_seconds=0.1,
+        selected_clips=clips,
+        all_clips=clips,
+    )
+    create_analysis_job(job_id, source_dir=tmp_path)
+    update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
+
+    analyzed = client.get(f"/api/analysis/{job_id}").json()["clips"]
+    first_id, second_id = (clip["clip_id"] for clip in analyzed)
+    assert first_id != second_id
+    assert client.get(f"/api/analysis/{job_id}").json()["clips"][0]["clip_id"] == first_id
+
+    first_plan = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "selected_clip_ids": [first_id], "target_duration": 15.0},
+    )
+    assert first_plan.status_code == 200
+    assert [clip["clip_id"] for clip in first_plan.json()["clips"]] == [first_id]
+
+    both_plan = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "selected_clip_ids": [first_id, second_id], "target_duration": 15.0},
+    )
+    assert both_plan.status_code == 200
+    assert {clip["clip_id"] for clip in both_plan.json()["clips"]} == {first_id, second_id}
+
+
+def test_plan_reel_rejects_empty_duplicate_unknown_and_cross_job_clip_ids(tmp_path: Path):
+    job_a = "00000000-0000-0000-0000-000000000151"
+    job_b = "00000000-0000-0000-0000-000000000152"
+    _completed_analysis_job_with_clips(job_a, tmp_path)
+    _completed_analysis_job_with_clips(job_b, tmp_path)
+    id_a = client.get(f"/api/analysis/{job_a}").json()["clips"][0]["clip_id"]
+    id_b = client.get(f"/api/analysis/{job_b}").json()["clips"][0]["clip_id"]
+
+    empty = client.post("/api/reels/plan", json={"analysis_job_id": job_a, "selected_clip_ids": []})
+    assert empty.status_code == 422
+    duplicate = client.post(
+        "/api/reels/plan", json={"analysis_job_id": job_a, "selected_clip_ids": [id_a, id_a]}
+    )
+    assert duplicate.status_code == 422
+    unknown = client.post(
+        "/api/reels/plan", json={"analysis_job_id": job_a, "selected_clip_ids": [str(uuid.uuid4())]}
+    )
+    assert unknown.status_code == 422
+    cross_job = client.post(
+        "/api/reels/plan", json={"analysis_job_id": job_a, "selected_clip_ids": [id_b]}
+    )
+    assert cross_job.status_code == 422
+
+
+def test_plan_reel_rejects_selection_that_cannot_fit_target_duration(tmp_path: Path):
+    from app.core.job_store import create_analysis_job, update_analysis_job
+    from app.schemas.batch import BatchAnalysisResult, BatchClip
+
+    job_id = "00000000-0000-0000-0000-000000000153"
+    clips = [
+        BatchClip(**_batch_clip_payload(f"video-{index}.mp4", 0.0, 1.0, 90 - index))
+        for index in range(7)
+    ]
+    result = BatchAnalysisResult(
+        batch_id="too-many-selected-test",
+        input_video_count=7,
+        total_segments=7,
+        accepted_before_dedupe=7,
+        duplicates_removed=0,
+        final_selected_count=7,
+        processing_time_seconds=0.1,
+        selected_clips=clips,
+        all_clips=clips,
+    )
+    create_analysis_job(job_id, source_dir=tmp_path)
+    update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
+    clip_ids = [clip["clip_id"] for clip in client.get(f"/api/analysis/{job_id}").json()["clips"]]
+
+    response = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "selected_clip_ids": clip_ids, "target_duration": 15.0},
+    )
+    assert response.status_code == 422
+    assert "do not fit" in response.json()["detail"]
+
+
+def test_plan_reel_rejects_selected_clip_shorter_than_min_clip_duration(tmp_path: Path):
+    from app.core.job_store import create_analysis_job, update_analysis_job
+    from app.schemas.batch import BatchAnalysisResult, BatchClip
+
+    job_id = "00000000-0000-0000-0000-000000000154"
+    # Clip with duration 0.3s is below default min_clip_duration (0.5s)
+    clips = [
+        BatchClip(**_batch_clip_payload("video-short.mp4", 0.0, 0.3, 85))
+    ]
+    result = BatchAnalysisResult(
+        batch_id="short-clip-test",
+        input_video_count=1,
+        total_segments=1,
+        accepted_before_dedupe=1,
+        duplicates_removed=0,
+        final_selected_count=1,
+        processing_time_seconds=0.1,
+        selected_clips=clips,
+        all_clips=clips,
+    )
+    create_analysis_job(job_id, source_dir=tmp_path)
+    update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
+    clip_ids = [clip["clip_id"] for clip in client.get(f"/api/analysis/{job_id}").json()["clips"]]
+
+    response = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "selected_clip_ids": clip_ids, "target_duration": 15.0},
+    )
+    assert response.status_code == 422
+    assert "shorter than the minimum clip duration" in response.json()["detail"]
 
 
 def test_plan_reel_estimate_accounts_for_registered_template(monkeypatch, tmp_path: Path):
@@ -295,7 +541,7 @@ def test_plan_reel_estimate_accounts_for_registered_template(monkeypatch, tmp_pa
 
     assert response.status_code == 200
     plan = response.json()
-    assert plan["template_seconds"] == 0.5
+    assert plan["template_seconds"] == 1.0
     assert plan["end_card_seconds"] == 5.0
     assert plan["estimated_final_duration"] == pytest.approx(15.5)
     assert plan["duration_status"] == "ok"
@@ -338,44 +584,74 @@ def test_generate_reel_from_plan_end_to_end(synthetic_video_with_audio: Path, mo
     from app.schemas.batch import BatchAnalysisResult, BatchClip
 
     clip = BatchClip(**_batch_clip_payload(synthetic_video_with_audio.name, 0.0, 1.0, 90))
+    unselected_clip = BatchClip(**_batch_clip_payload(synthetic_video_with_audio.name, 1.0, 2.0, 88))
     batch_result = BatchAnalysisResult(
         batch_id="test-batch-2",
         input_video_count=1,
-        total_segments=1,
-        accepted_before_dedupe=1,
+        total_segments=2,
+        accepted_before_dedupe=2,
         duplicates_removed=0,
         final_selected_count=1,
         processing_time_seconds=0.1,
         selected_clips=[clip],
-        all_clips=[clip],
+        all_clips=[clip, unselected_clip],
     )
     job_id = "00000000-0000-0000-0000-000000000102"
     create_analysis_job(job_id, source_dir=uploads_dir)
     update_analysis_job(job_id, status="completed", stage="completed", per_video_results=[], result=batch_result)
 
+    selected_id = client.get(f"/api/analysis/{job_id}").json()["clips"][0]["clip_id"]
     plan_response = client.post(
-        "/api/reels/plan", json={"analysis_job_id": job_id, "target_duration": 12.0, "min_quality_score": 0}
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "selected_clip_ids": [selected_id], "target_duration": 12.0},
     )
     assert plan_response.status_code == 200
     reel_plan = plan_response.json()
     assert len(reel_plan["clips"]) == 1
 
-    generate_response = client.post(
-        "/api/reels/generate",
-        json={
+    _, status = _generate_result(
+        {
             "reel_plan": reel_plan,
             "analysis_job_id": job_id,
+            "selected_clip_ids": [reel_plan["clips"][0]["clip_id"]],
             "brand": {"text": None},
         },
     )
 
-    assert generate_response.status_code == 200
-    body = generate_response.json()
+    assert status["status"] == "completed"
+    body = status["result"]
     assert body["width"] == 1080
     assert body["height"] == 1920
     assert body["clip_count"] == 1
     assert body["duration"] == pytest.approx(reel_plan["estimated_final_duration"], abs=0.5)
     assert body["duration_status"] == reel_plan["duration_status"]
+
+
+def test_generate_reel_accepts_planned_clip_with_float_imprecision(tmp_path: Path):
+    job_id = "00000000-0000-0000-0000-000000000109"
+    _completed_analysis_job_with_clips(job_id, tmp_path)
+
+    plan_response = client.post(
+        "/api/reels/plan",
+        json={"analysis_job_id": job_id, "target_duration": 15.0},
+    )
+    assert plan_response.status_code == 200
+    reel_plan = plan_response.json()
+    # Apply slight float imprecision within 1e-6 tolerance
+    reel_plan["clips"][0]["planned_end"] += 5e-7
+
+    response = client.post(
+        "/api/reels/generate",
+        json={
+            "reel_plan": reel_plan,
+            "analysis_job_id": job_id,
+            "selected_clip_ids": [reel_plan["clips"][0]["clip_id"]],
+            "brand": {"text": None},
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+
 
 
 # --- Phase 8: editor plan (transitions, branding, product overlays, thumbnails) ---
@@ -447,13 +723,11 @@ def test_generate_reel_with_transitions_and_product_overlays(
         "overlays": {"brand_placement": "beginning", "material_placement": "detail_clip", "material_clip_position": 2, "price_placement": "final_clip"},
     }
 
-    response = client.post(
-        "/api/reels/generate",
-        json={"reel_plan": reel_plan, "output_filename": "edited_reel.mp4"},
+    _, status = _generate_result(
+        {"reel_plan": reel_plan, "output_filename": "edited_reel.mp4"}
     )
-
-    assert response.status_code == 200
-    body = response.json()
+    assert status["status"] == "completed"
+    body = status["result"]
     assert body["width"] == 1080
     assert body["height"] == 1920
     assert body["clip_count"] == 2
@@ -505,10 +779,9 @@ def test_generate_reel_with_music_end_to_end(
         },
     }
 
-    response = client.post("/api/reels/generate", json={"reel_plan": reel_plan})
-
-    assert response.status_code == 200
-    body = response.json()
+    _, status = _generate_result({"reel_plan": reel_plan})
+    assert status["status"] == "completed"
+    body = status["result"]
     assert body["audio_codec"] == "aac"
     assert body["duration"] == pytest.approx(6.0, abs=0.3)
 
@@ -558,9 +831,12 @@ def test_generate_reel_music_path_traversal_is_rejected(
         },
     }
 
-    response = client.post("/api/reels/generate", json={"reel_plan": reel_plan})
-
-    assert response.status_code == 400
+    from app.services.credit_service import get_balance
+    credits_before = get_balance(reels.DEMO_USER_ID)
+    _, status = _generate_result({"reel_plan": reel_plan})
+    assert status["status"] == "failed"
+    assert "not found" in status["error"].lower()
+    assert get_balance(reels.DEMO_USER_ID) == credits_before
 
 
 def test_generate_reel_returns_duration_status_field(
@@ -579,10 +855,9 @@ def test_generate_reel_returns_duration_status_field(
         "min_total_duration": 0.5, "max_total_duration": 5.0, "brand": {"text": None},
     }
 
-    response = client.post("/api/reels/generate", json=payload)
-
-    assert response.status_code == 200
-    assert response.json()["duration_status"] in ("ok", "insufficient_content")
+    _, status = _generate_result(payload)
+    assert status["status"] == "completed"
+    assert status["result"]["duration_status"] in ("ok", "insufficient_content")
 
 
 @pytest.mark.parametrize(

@@ -3,8 +3,9 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from PIL import Image
 
-from app.core.job_store import create_template_image
+from app.core.job_store import create_template_image, delete_template_image_if_unused, get_template_image
 from app.core.security import safe_filename
 
 router = APIRouter()
@@ -122,6 +123,29 @@ async def upload_template_image(
             detail=f"Empty template image: {filename}",
         )
 
+    expected_formats = {
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".webp": "WEBP",
+    }
+    try:
+        with Image.open(destination) as image:
+            image_format = image.format
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > 40_000_000:
+                raise ValueError("Image dimensions are outside the supported range")
+            image.verify()
+        if image_format != expected_formats[extension]:
+            raise ValueError("Image contents do not match the filename extension")
+    except Exception as exc:
+        destination.unlink(missing_ok=True)
+        shutil.rmtree(template_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid template image. Upload a valid JPG, PNG, or WEBP file.",
+        ) from exc
+
     # Store template metadata in the job store
     create_template_image(
         template_id=template_id,
@@ -135,3 +159,42 @@ async def upload_template_image(
         "filename": filename,
         "size": size,
     }
+
+
+@router.delete("/templates/{template_id}")
+def delete_template(template_id: str) -> dict[str, bool]:
+    try:
+        safe_template_id = str(uuid.UUID(template_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid template ID") from exc
+
+    record = get_template_image(safe_template_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    templates_root = TEMPLATE_IMAGES_DIR.resolve()
+    template_path = Path(record.get("path", "")).resolve()
+    template_dir = template_path.parent
+    if (
+        not template_path.is_relative_to(templates_root)
+        or template_dir.parent != templates_root
+        or template_dir.name != safe_template_id
+    ):
+        raise HTTPException(status_code=400, detail="Invalid template location")
+
+    removed_record, deleted = delete_template_image_if_unused(safe_template_id)
+    if removed_record is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if not deleted:
+        raise HTTPException(status_code=409, detail="Template is attached to an active analysis or saved reel workflow")
+
+    try:
+        shutil.rmtree(template_dir, ignore_errors=False)
+    except OSError as exc:
+        create_template_image(
+            safe_template_id,
+            str(removed_record.get("filename", "template")),
+            str(template_path),
+        )
+        raise HTTPException(status_code=500, detail="Could not remove the unused template image") from exc
+
+    return {"deleted": True}

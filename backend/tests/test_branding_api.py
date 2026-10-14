@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,24 @@ from app.main import app
 from app.services import brand_service
 
 client = TestClient(app)
+
+
+def test_branding_routes_are_registered_once_at_expected_paths():
+    registered = Counter(
+        (method, route.path)
+        for route in app.routes
+        if route.path.startswith("/api/branding")
+        for method in (route.methods or set())
+    )
+
+    assert registered == Counter(
+        {
+            ("GET", "/api/branding"): 1,
+            ("GET", "/api/branding/logo"): 1,
+            ("POST", "/api/branding/logo"): 1,
+            ("POST", "/api/branding/logo/placement"): 1,
+        }
+    )
 
 
 def _configure_brand(monkeypatch, tmp_path: Path, data: dict, logo_bytes: bytes | None = None) -> None:

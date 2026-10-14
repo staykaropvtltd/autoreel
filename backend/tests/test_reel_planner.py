@@ -198,6 +198,14 @@ def test_plan_reel_respects_min_clip_duration():
     assert plan.duration_status == "insufficient_content"
 
 
+def test_default_planner_keeps_usable_half_second_scene():
+    clip = _clip("short.mp4", 0.0, 0.5, score=90, hash_int=5)
+    plan = plan_reel([clip], PlanningConfig(target_duration=5.5))
+
+    assert len(plan.clips) == 1
+    assert plan.clips[0].planned_duration == pytest.approx(0.5)
+
+
 def test_plan_reel_breaks_equal_score_ties_deterministically():
     clips = [
         _clip("z.mp4", 0.0, 3.0, score=90, hash_int=7),

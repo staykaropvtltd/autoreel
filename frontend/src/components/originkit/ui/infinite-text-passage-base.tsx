@@ -17,7 +17,7 @@ interface ZoomTextTunnelProps {
   style?: React.CSSProperties;
 }
 
-function OriginkitBase_ZoomTextTunnel(props: ZoomTextTunnelProps) {
+function __OriginkitBase_ZoomTextTunnel(props: ZoomTextTunnelProps) {
   const {
     texts = ["EXPLORE", "CREATE", "INNOVATE", "FUTURE"],
     font = {
@@ -211,5 +211,5 @@ const __originkitPresetProps = {
 };
 
 export default function ZoomTextTunnel(props: Record<string, unknown>) {
-  return <OriginkitBase_ZoomTextTunnel {...(__originkitPresetProps as Record<string, unknown>)} {...props} />;
+  return <__OriginkitBase_ZoomTextTunnel {...(__originkitPresetProps as Record<string, unknown>)} {...props} />;
 }

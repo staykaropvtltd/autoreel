@@ -1,11 +1,87 @@
 
 import json
 import logging
+import os
+import signal
 import shutil
 import subprocess
+import time
+from threading import local
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+def _timeout_from_env(name: str, fallback: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(fallback))))
+    except ValueError:
+        logger.warning("Invalid %s value; using default timeout", name)
+        return fallback
+
+
+FFMPEG_TIMEOUT_SECONDS = _timeout_from_env("AUTOREEL_FFMPEG_TIMEOUT_SECONDS", 1800)
+FFPROBE_TIMEOUT_SECONDS = _timeout_from_env("AUTOREEL_FFPROBE_TIMEOUT_SECONDS", 120)
+_render_context = local()
+
+
+def set_render_deadline(deadline: float | None) -> None:
+    _render_context.deadline = deadline
+
+
+def _bounded_timeout(configured: int) -> int:
+    deadline = getattr(_render_context, "deadline", None)
+    if deadline is None:
+        return configured
+    return max(0, min(configured, int(deadline - time.monotonic())))
+
+
+def _run_process(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    """Run a media tool in its own process group and reap its full process tree."""
+    if timeout <= 0:
+        raise subprocess.TimeoutExpired(command, timeout)
+    kwargs: dict[str, object] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    process = subprocess.Popen(command, **kwargs)  # type: ignore[arg-type]
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+                if getattr(result, "returncode", 0) != 0:
+                    process.kill()
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            # Kill any descendants that ignored SIGTERM even if the leader exited.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 class FFmpegNotAvailableError(RuntimeError):
@@ -57,15 +133,7 @@ def probe(input_path: Path) -> dict:
     ]
 
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,
-            check=False,
-        )
+        result = _run_process(command, _bounded_timeout(FFPROBE_TIMEOUT_SECONDS))
     except subprocess.TimeoutExpired:
         logger.error("FFprobe timed out for input: %s", input_path)
         raise FFprobeError("Unable to inspect the media file.") from None
@@ -95,15 +163,7 @@ def run_ffmpeg(args: list[str]) -> None:
     command = ["ffmpeg", "-y", *args]
 
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=600,
-            check=False,
-        )
+        result = _run_process(command, _bounded_timeout(FFMPEG_TIMEOUT_SECONDS))
     except subprocess.TimeoutExpired:
         logger.error("FFmpeg processing timed out")
         raise FFmpegProcessingError(

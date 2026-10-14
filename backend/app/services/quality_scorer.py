@@ -128,11 +128,11 @@ def build_reasons(
         reasons.append("Too bright")
 
     if metrics.avg_motion < t.motion_ideal_low:
-        reasons.append("Very low motion")
+        reasons.append("Low frame-to-frame change")
     elif metrics.avg_motion > t.motion_ideal_high:
-        reasons.append("Excessive motion/shake")
+        reasons.append("High frame-to-frame change")
     elif motion >= 70:
-        reasons.append("Moderate motion")
+        reasons.append("Moderate frame-to-frame change")
 
     if metrics.dark_frame_ratio >= t.dark_ratio_penalty_threshold:
         reasons.append("Contains dark/underexposed frames")

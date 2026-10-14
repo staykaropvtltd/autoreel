@@ -1,6 +1,7 @@
 from enum import Enum
+import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from app.schemas.analysis import QualityMetrics
 
@@ -13,6 +14,7 @@ class SelectionStatus(str, Enum):
 
 
 class BatchClip(BaseModel):
+    clip_id: uuid.UUID | None = None
     source_file: str
     start_time: float
     end_time: float
@@ -26,6 +28,7 @@ class BatchClip(BaseModel):
     locked: bool = False
     duplicate_of: str | None = None
     closest_neighbor_distance: int | None = None
+    _perceptual_hashes: tuple[int, ...] = PrivateAttr(default=())
 
 
 class BatchAnalysisResult(BaseModel):
