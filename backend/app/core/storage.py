@@ -3,9 +3,10 @@ import os
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = BACKEND_DIR.parent
 
 configured_root = Path(
-    os.getenv("REELKARO_STORAGE_DIR", str(BACKEND_DIR / "storage"))
+    os.getenv("REELKARO_STORAGE_DIR", str(PROJECT_ROOT / "storage"))
 )
 
 if not configured_root.is_absolute():

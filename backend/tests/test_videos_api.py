@@ -1,11 +1,36 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.api import videos
+from app.core.auth_dependencies import get_current_user
 from app.main import app
+from app.models.database_models import Base, User
 
 client = TestClient(app)
+TEST_USER_ID = 678910
+
+
+@pytest.fixture(autouse=True)
+def authenticated_video_uploads(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'video-jobs.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    with sessions() as db:
+        db.add(User(id=TEST_USER_ID, email="video-upload@example.test", name="Video uploader"))
+        db.commit()
+    from app.core import job_store
+    monkeypatch.setattr(job_store, "SessionLocal", sessions)
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=TEST_USER_ID, email="video-upload@example.test", name="Video uploader"
+    )
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
+    Base.metadata.drop_all(engine)
+    engine.dispose()
 
 
 def test_upload_single_video(synthetic_video_with_audio: Path, monkeypatch, tmp_path: Path):
@@ -27,6 +52,22 @@ def test_upload_single_video(synthetic_video_with_audio: Path, monkeypatch, tmp_
 
     saved_path = (tmp_path / "uploads" / body["job_id"] / synthetic_video_with_audio.name)
     assert saved_path.exists()
+    from app.core.job_store import get_upload_job
+    owned_job = get_upload_job(body["job_id"], TEST_USER_ID)
+    assert owned_job["user_id"] == TEST_USER_ID
+    assert owned_job["files"][0]["user_id"] == TEST_USER_ID
+    assert get_upload_job(body["job_id"], TEST_USER_ID + 1) is None
+
+
+def test_upload_requires_authentication(monkeypatch, tmp_path: Path):
+    app.dependency_overrides.pop(get_current_user, None)
+    monkeypatch.setattr(videos, "RAW_UPLOADS_DIR", tmp_path / "uploads")
+    response = client.post(
+        "/api/videos/upload",
+        files=[("files", ("clip.mp4", b"video", "video/mp4"))],
+    )
+    assert response.status_code == 401
+    assert not (tmp_path / "uploads").exists()
 
 
 def test_upload_stores_original_bytes_unchanged(synthetic_video_with_audio: Path, monkeypatch, tmp_path: Path):
@@ -81,15 +122,18 @@ def test_upload_rejects_invalid_format(monkeypatch, tmp_path: Path):
     assert "unsupported" in response.json()["detail"].lower()
 
 
-def test_upload_rejects_path_traversal_filename(monkeypatch, tmp_path: Path):
+@pytest.mark.parametrize("filename", ["../../evil.mp4", "..\\..\\evil.mp4"])
+def test_upload_rejects_path_traversal_filename(filename, monkeypatch, tmp_path: Path):
     monkeypatch.setattr(videos, "RAW_UPLOADS_DIR", tmp_path / "uploads")
 
     response = client.post(
         "/api/videos/upload",
-        files=[("files", ("../../evil.mp4", b"fake video bytes", "video/mp4"))],
+        files=[("files", (filename, b"fake video bytes", "video/mp4"))],
     )
 
     assert response.status_code == 400
+    assert not (tmp_path / "evil.mp4").exists()
+    assert not (tmp_path / "uploads" / "evil.mp4").exists()
 
 
 def test_upload_rejects_oversized_file(monkeypatch, tmp_path: Path):

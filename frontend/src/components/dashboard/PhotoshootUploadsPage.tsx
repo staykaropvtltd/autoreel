@@ -28,11 +28,15 @@ import {
   X,
 } from "lucide-react";
 import {
+  api,
   apiErrorMessage,
   deleteTemplateImage,
+  downloadAuthenticatedVideo,
   generateReel,
   getAnalysis,
   getDemoStatus,
+  getTemplatePreview,
+  listTemplates,
   listMusic,
   musicPreviewUrl,
   planReel,
@@ -40,7 +44,10 @@ import {
   uploadTemplateImage,
   uploadMusic,
   uploadVideos,
+  type TemplateInfo,
 } from "../../api";
+import { invalidateMissingBrandLogoCache } from "../../branding";
+import AuthenticatedVideoPreview from "../AuthenticatedVideoPreview";
 import { pollAnalysisUntilTerminal } from "../../analysisPolling";
 import { getCreditGate } from "../../creditAvailability";
 import { buildAnalysisStartPayload, isSameTemplateImage, validateTemplateImage } from "../../templateSelection";
@@ -55,6 +62,7 @@ import type {
   ReelResult,
 } from "../../types";
 import AudioWaveformCutter from "./AudioWaveformCutter";
+import { useAuth } from "../../context/AuthContext";
 
 const formatInrPrice = (value: string): string | null => {
   const trimmed = value.trim();
@@ -273,6 +281,7 @@ export default function PhotoshootUploadsPage({
   onOpenInEditor,
   onAddToLibrary,
 }: PhotoshootUploadsPageProps) {
+  const { preferences, updatePreferences } = useAuth();
 
   /* ── Multi-stage flow: Step 1 (Upload) -> Step 2 (Soundtrack & Reel Studio) ── */
   const [flowStage, setFlowStage] = useState<"upload" | "studio">("upload");
@@ -282,6 +291,10 @@ export default function PhotoshootUploadsPage({
   const [templateFile, setTemplateFile] = useState<File | null>(null);
   const [templatePreviewUrl, setTemplatePreviewUrl] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
+  const [savedTemplates, setSavedTemplates] = useState<TemplateInfo[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templateLibraryError, setTemplateLibraryError] = useState<string | null>(null);
+  const [previewingTemplateId, setPreviewingTemplateId] = useState<string | null>(null);
   const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
   const templateInputRef = useRef<HTMLInputElement | null>(null);
   const templatePreviewUrlRef = useRef<string | null>(null);
@@ -303,6 +316,15 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
     if (templatePreviewUrlRef.current) URL.revokeObjectURL(templatePreviewUrlRef.current);
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void listTemplates(controller.signal)
+      .then((items) => { setSavedTemplates(items); setTemplateLibraryError(null); })
+      .catch(() => { setSavedTemplates([]); setTemplateLibraryError("Saved templates are unavailable."); })
+      .finally(() => setTemplatesLoading(false));
+    return () => controller.abort();
+  }, []);
+
   const selectTemplateImage = (file: File | null) => {
     if (analysisRunningRef.current || generationRunningRef.current) return;
     if (isSameTemplateImage(templateFile, file)) return;
@@ -313,13 +335,13 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
         return;
       }
     }
-    if (templateId) void deleteTemplateImage(templateId).catch(() => {});
     if (templatePreviewUrlRef.current) URL.revokeObjectURL(templatePreviewUrlRef.current);
     const nextPreviewUrl = file ? URL.createObjectURL(file) : null;
     templatePreviewUrlRef.current = nextPreviewUrl;
     setTemplatePreviewUrl(nextPreviewUrl);
     setTemplateFile(file);
     setTemplateId(null);
+    void updatePreferences({ preferred_template_id: null }).catch(() => {});
     if (analysisJobId) {
       setAnalysisJobId(null);
       setAnalyzedClips([]);
@@ -331,6 +353,53 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
       generationRequestIdRef.current = null;
     }
     setError(null);
+  };
+
+  const selectSavedTemplate = async (template: TemplateInfo) => {
+    if (analysisRunningRef.current || generationRunningRef.current) return;
+    setPreviewingTemplateId(template.template_id);
+    try {
+      const blob = await getTemplatePreview(template.template_id);
+      const previewUrl = URL.createObjectURL(blob);
+      if (templatePreviewUrlRef.current) URL.revokeObjectURL(templatePreviewUrlRef.current);
+      templatePreviewUrlRef.current = previewUrl;
+      setTemplatePreviewUrl(previewUrl);
+      setTemplateFile(null);
+      setTemplateId(template.template_id);
+      void updatePreferences({ preferred_template_id: template.template_id }).catch(() => {});
+      if (analysisJobId) {
+        setAnalysisJobId(null);
+        setAnalyzedClips([]);
+        setSelectedClipIds([]);
+        setGeneratedResult(null);
+        setGeneratedReelId(null);
+        setIsSavedToLibrary(false);
+        setCurrentStep(1);
+        generationRequestIdRef.current = null;
+      }
+      setError(null);
+    } catch (cause) {
+      setError(apiErrorMessage(cause, "Could not load that template preview."));
+    } finally {
+      setPreviewingTemplateId(null);
+    }
+  };
+
+  const removeSavedTemplate = async (template: TemplateInfo) => {
+    try {
+      await deleteTemplateImage(template.template_id);
+      setSavedTemplates((items) => items.filter((item) => item.template_id !== template.template_id));
+      if (templateId === template.template_id) {
+        if (templatePreviewUrlRef.current) URL.revokeObjectURL(templatePreviewUrlRef.current);
+        templatePreviewUrlRef.current = null;
+        setTemplatePreviewUrl(null);
+        setTemplateFile(null);
+        setTemplateId(null);
+        void updatePreferences({ preferred_template_id: null }).catch(() => {});
+      }
+    } catch (cause) {
+      setError(apiErrorMessage(cause, "Could not delete that template."));
+    }
   };
 
   /* ── Generate preview URL for staged video ── */
@@ -349,6 +418,10 @@ const clipPreviewRef = useRef<HTMLVideoElement | null>(null);
   const [category, setCategory] = useState("Product");
   const [price, setPrice] = useState("");
   const [targetDuration, setTargetDuration] = useState<15 | 30 | 45>(15);
+  useEffect(() => {
+    const savedDuration = preferences?.default_target_duration;
+    if (savedDuration === 15 || savedDuration === 30 || savedDuration === 45) setTargetDuration(savedDuration);
+  }, [preferences?.user_id, preferences?.default_target_duration]);
 
   /* ── Music catalogue from backend ── */
   const [backendTracks, setBackendTracks] = useState<MusicTrack[]>([]);
@@ -419,17 +492,8 @@ const handleBrandLogoUpload = async (
   try {
     setIsUploadingBrandLogo(true);
 
-    const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_URL}/branding/logo`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error("Failed to upload brand logo. Please try again.");
-    }
+    await api.post("/branding/logo", formData);
+    invalidateMissingBrandLogoCache();
   } catch {
     setBrandLogo(null);
     setBrandLogoPreview(null);
@@ -452,29 +516,31 @@ const handleBrandLogoUpload = async (
   /*  Load backend track catalogue                   */
   /* ─────────────────────────────────────────────── */
   
+
 useEffect(() => {
   listMusic()
-    .then((response) => {
-      // Support either a direct array or a wrapped API response.
-      const tracks = Array.isArray(response)
-        ? response
-        : Array.isArray(response?.tracks)
-        ? response.tracks
-        : Array.isArray(response?.data)
-        ? response.data
-        : [];
-
+    .then((tracks) => {
       setBackendTracks(tracks);
 
       if (tracks.length > 0) {
-        setSelectedTrack(tracks[0]);
+        const preferred = tracks.find((track) => track.id === preferences?.preferred_music_track_id);
+        if (preferred) setSelectedTrack(preferred);
+        else setSelectedTrack(tracks[0]);
       }
     })
-    .catch((error) => {
-      console.error("Failed to load music catalogue:", error);
+    .catch((error: unknown) => {
+      console.error("Failed to load music tracks:", error);
       setBackendTracks([]);
     });
-}, []);
+}, [preferences?.user_id]);
+
+useEffect(() => {
+  if (!templatesLoading && preferences?.preferred_template_id && savedTemplates.some((item) => item.template_id === preferences.preferred_template_id) && !templateId) {
+    const preferred = savedTemplates.find((item) => item.template_id === preferences.preferred_template_id);
+    if (preferred) void selectSavedTemplate(preferred);
+  }
+}, [templatesLoading, preferences?.preferred_template_id, savedTemplates, templateId]);
+
 
 
   /* ─────────────────────────────────────────────── */
@@ -613,6 +679,7 @@ useEffect(() => {
     quickPreviewRef.current?.pause();
     setQuickPreviewId(null);
     setSelectedTrack(backendTrack);
+    void updatePreferences({ preferred_music_track_id: backendTrack.id }).catch(() => {});
     setAudioCutStart(0);
     setAudioCutEnd(targetDuration);
     setShowCutter(true);
@@ -762,6 +829,8 @@ const playClipPreview = (index: number) => {
         }
         activeTemplateId = templateResponse.template_id;
         setTemplateId(activeTemplateId);
+        setSavedTemplates((items) => [templateResponse, ...items.filter((item) => item.template_id !== templateResponse.template_id)]);
+        setTemplateLibraryError(null);
         setIsUploadingTemplate(false);
       }
 
@@ -1104,8 +1173,9 @@ setReelPlaybackError(false);
             Reel generation complete. Your reel is ready to preview or download.
           </p>
           <div className="w-64 h-[440px] rounded-2xl overflow-hidden bg-black border-2 border-emerald-500/40 shadow-xl shrink-0">
-            <video
-              src={generatedResult.download_url}
+            <AuthenticatedVideoPreview
+              videoUrl={generatedResult.download_url}
+              title={collectionTitle}
               controls
               autoPlay
               loop
@@ -1147,13 +1217,18 @@ setReelPlaybackError(false);
               )}
             </div>
             <div className="flex flex-wrap gap-3 pt-2">
-              <a
-                href={generatedResult.download_url}
-                download={`${collectionTitle.toLowerCase().replace(/\s+/g, "_")}.mp4`}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#ff681b] hover:bg-[#ff7d3b] text-white font-bold text-sm transition-all shadow-lg shadow-[#ff681b]/20"
+              <button
+                type="button"
+                onClick={() =>
+                  void downloadAuthenticatedVideo(
+                    generatedResult.download_url,
+                    `${collectionTitle.toLowerCase().replace(/\s+/g, "_")}.mp4`
+                  )
+                }
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#ff681b] hover:bg-[#ff7d3b] text-white font-bold text-sm transition-all shadow-lg shadow-[#ff681b]/20 cursor-pointer"
               >
                 <Download className="w-4 h-4" /> DOWNLOAD REEL
-              </a>
+              </button>
               <button
                 type="button"
                 disabled
@@ -1354,7 +1429,7 @@ setReelPlaybackError(false);
                     <button
                       key={dur}
                       type="button"
-                      onClick={() => setTargetDuration(dur)}
+                      onClick={() => { setTargetDuration(dur); void updatePreferences({ default_target_duration: dur }).catch(() => {}); }}
                       className={`py-2 px-3 rounded-lg border text-xs mono font-bold transition-all ${
                         targetDuration === dur
                           ? "border-[#ff681b] bg-[#ff681b]/15 text-[#ff681b]"
@@ -2054,6 +2129,28 @@ setReelPlaybackError(false);
               <p className="text-[11px] text-[var(--db-dim)]">
                 JPG, PNG, or WEBP · 20 MB maximum · You can continue without one.
               </p>
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-white/55">
+                  Your saved templates
+                </p>
+                {templatesLoading ? (
+                  <p className="text-xs text-[var(--db-dim)]">Loading templates…</p>
+                ) : templateLibraryError ? (
+                  <p role="alert" className="text-xs text-red-300">{templateLibraryError}</p>
+                ) : savedTemplates.length === 0 ? (
+                  <p className="text-xs text-[var(--db-dim)]">No saved templates yet.</p>
+                ) : savedTemplates.map((template) => (
+                  <div key={template.template_id} className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate text-xs text-white/80">{template.filename}</span>
+                    <button type="button" onClick={() => void selectSavedTemplate(template)} disabled={isGenerating || isUploadingTemplate || previewingTemplateId !== null} className="text-xs font-semibold text-[#ff681b] disabled:opacity-50">
+                      {previewingTemplateId === template.template_id ? "Loading…" : templateId === template.template_id ? "Selected" : "Preview / Use"}
+                    </button>
+                    <button type="button" onClick={() => void removeSavedTemplate(template)} disabled={isGenerating || isUploadingTemplate} className="text-xs text-white/50 hover:text-red-300 disabled:opacity-50">
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Selected track summary */}
@@ -2166,18 +2263,7 @@ setReelPlaybackError(false);
   setBrandPlacement("start");
 
   try {
-    await fetch(
-      `${import.meta.env.VITE_API_BASE_URL}/branding/logo`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          placement: "start",
-        }),
-      }
-    );
+    await api.post("/branding/logo/placement", { placement: "start" });
   } catch (error) {
     console.error("Failed to update logo placement:", error);
   }
@@ -2197,18 +2283,7 @@ setReelPlaybackError(false);
   setBrandPlacement("entire");
 
   try {
-    await fetch(
-      `${import.meta.env.VITE_API_BASE_URL}/branding/logo/placement`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          placement: "entire",
-        }),
-      }
-    );
+    await api.post("/branding/logo/placement", { placement: "entire" });
   } catch (error) {
     console.error("Failed to update logo placement:", error);
   }
@@ -2289,7 +2364,7 @@ setReelPlaybackError(false);
                     <button
                       key={dur}
                       type="button"
-                      onClick={() => setTargetDuration(dur)}
+                      onClick={() => { setTargetDuration(dur); void updatePreferences({ default_target_duration: dur }).catch(() => {}); }}
                       className={`py-2 px-3 rounded-lg border text-xs mono font-bold transition-all ${
                         targetDuration === dur
                           ? "border-[#ff681b] bg-[#ff681b]/15 text-[#ff681b]"

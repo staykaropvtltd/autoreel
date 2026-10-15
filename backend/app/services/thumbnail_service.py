@@ -10,6 +10,7 @@ from pathlib import Path
 
 from app.services.ffmpeg_service import run_ffmpeg
 from app.services.reel_composer import resolve_source_path
+from app.core.job_store import register_thumbnail_owner
 
 THUMBNAIL_WIDTH = 320
 
@@ -47,7 +48,7 @@ def get_or_create_thumbnail(
     return thumb_path
 
 
-def attach_thumbnails(clips, source_dir: Path, cache_dir: Path, url_prefix: str = "/api/thumbnails") -> None:
+def attach_thumbnails(clips, source_dir: Path, cache_dir: Path, user_id: int, url_prefix: str = "/api/thumbnails") -> None:
     """Mutates each clip's thumbnail_url in place. Best-effort: a failure
     generating one clip's thumbnail (e.g. a slightly out-of-range seek on
     unusual footage) never breaks planning - it just leaves that clip's
@@ -58,6 +59,7 @@ def attach_thumbnails(clips, source_dir: Path, cache_dir: Path, url_prefix: str 
             source_path = resolve_source_path(clip.source_file, source_dir)
             timestamp = clip.planned_start + min(0.3, clip.planned_duration / 2)
             thumb_path = get_or_create_thumbnail(source_path, timestamp, cache_dir)
+            register_thumbnail_owner(thumb_path.stem, user_id)
             clip.thumbnail_url = f"{url_prefix}/{thumb_path.stem}"
         except Exception:
             clip.thumbnail_url = None

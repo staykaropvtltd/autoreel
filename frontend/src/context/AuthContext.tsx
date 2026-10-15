@@ -1,5 +1,26 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { parseGoogleJwt } from "../services/googleAuth";
+
+import {
+  useEffect,
+  createContext,
+  useContext,
+  useState,
+  type ReactNode,
+} from "react";
+
+import {
+  loginWithEmail as apiLoginWithEmail,
+  loginWithGoogleCredential as apiLoginWithGoogleCredential,
+  signupWithEmail as apiSignupWithEmail,
+  clearAuthToken,
+  getAuthToken,
+  type AuthUser,
+  getUserPreferences,
+  updateUserPreferences as apiUpdateUserPreferences,
+  type UserPreferences,
+  type UserPreferencesUpdate,
+  updateUserProfile as apiUpdateUserProfile,
+} from "../api";
+import { useTheme } from "./ThemeContext";
 
 export interface User {
   id: string;
@@ -14,105 +35,195 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  loginWithEmail: (email: string, password: string) => Promise<void>;
-  signupWithEmail: (name: string, email: string, password: string, brandName?: string) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
-  loginWithGoogleCredential: (credential: string) => Promise<void>;
+  loginWithEmail: (
+    email: string,
+    password: string
+  ) => Promise<void>;
+  signupWithEmail: (
+    name: string,
+    email: string,
+    password: string,
+    brandName?: string
+  ) => Promise<void>;
+  loginWithGoogleCredential: (
+    credential: string
+  ) => Promise<void>;
   logout: () => void;
-  updateBrandName: (brandName: string) => void;
+  updateBrandName: (brandName: string) => Promise<void>;
+  preferences: UserPreferences | null;
+  preferencesLoading: boolean;
+  updatePreferences: (changes: UserPreferencesUpdate) => Promise<void>;
+  saveProfile: (name: string, brandName: string) => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType | undefined>(
+  undefined
+);
+
 const LEGACY_USER_STORAGE_KEY = "kaladhar_user";
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+function createAvatar(name: string): string {
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+    name
+  )}&backgroundColor=18181b,27272a&textColor=ffffff`;
+}
+
+function mapBackendUser(backendUser: AuthUser): User {
+  return {
+    id: backendUser.id,
+    name: backendUser.name,
+    email: backendUser.email,
+    provider: backendUser.provider,
+    brandName: backendUser.brandName || undefined,
+    avatar: backendUser.avatar || createAvatar(backendUser.name),
+  };
+}
+
+export function AuthProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const { setTheme } = useTheme();
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      if (!getAuthToken()) {
+        localStorage.removeItem(LEGACY_USER_STORAGE_KEY);
+        return null;
+      }
+      const savedUser = localStorage.getItem(
+        LEGACY_USER_STORAGE_KEY
+      );
+
+      return savedUser ? (JSON.parse(savedUser) as User) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => !!getAuthToken() && !!localStorage.getItem(LEGACY_USER_STORAGE_KEY)
+  );
+
   const [isLoading, setIsLoading] = useState(false);
+  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
+  const [preferencesLoading, setPreferencesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      setPreferences(null);
+      setPreferencesLoading(false);
+      return;
+    }
+    let active = true;
+    setPreferencesLoading(true);
+    getUserPreferences().then((loaded) => {
+      if (!active || loaded.user_id !== user.id) return;
+      setPreferences(loaded);
+      setTheme(loaded.theme);
+    }).catch((error) => {
+      console.error("Could not load account preferences", error);
+    }).finally(() => {
+      if (active) setPreferencesLoading(false);
+    });
+    return () => { active = false; };
+  }, [isAuthenticated, user?.id]);
+
+  const updatePreferences = async (changes: UserPreferencesUpdate) => {
+    const updated = await apiUpdateUserPreferences(changes);
+    if (!user || updated.user_id !== user.id) return;
+    setPreferences(updated);
+    if (changes.theme) setTheme(changes.theme);
+  };
+
+  const saveProfile = async (name: string, brandName: string) => {
+    await apiUpdateUserProfile(name.trim(), brandName.trim());
+    if (user) setSessionUser({ ...user, name: name.trim(), brandName: brandName.trim() });
+  };
 
   const setSessionUser = (newUser: User | null) => {
     setUser(newUser);
     setIsAuthenticated(!!newUser);
-  };
 
-  const loginWithEmail = async (email: string, _password: string) => {
-    setIsLoading(true);
-    // Simulate brief network latency for realism
-    await new Promise((r) => setTimeout(r, 450));
-    const namePart = email.split("@")[0];
-    const formattedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-    const authenticatedUser: User = {
-      id: `usr_${Date.now()}`,
-      name: formattedName,
-      email,
-      provider: "email",
-      avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(formattedName)}&backgroundColor=18181b,27272a&textColor=ffffff`,
-    };
-    setSessionUser(authenticatedUser);
-    setIsLoading(false);
-  };
-
-  const signupWithEmail = async (name: string, email: string, _password: string, brandName?: string) => {
-    setIsLoading(true);
-    await new Promise((r) => setTimeout(r, 550));
-    const newUser: User = {
-      id: `usr_${Date.now()}`,
-      name: name.trim(),
-      email: email.trim(),
-      provider: "email",
-      brandName: brandName?.trim() || undefined,
-      avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}&backgroundColor=18181b,27272a&textColor=ffffff`,
-    };
-    setSessionUser(newUser);
-    setIsLoading(false);
-  };
-
-  const loginWithGoogle = async () => {
-    setIsLoading(true);
-    // Simulate Google OAuth flow delay
-    await new Promise((r) => setTimeout(r, 600));
-    const googleUser: User = {
-      id: `g_${Date.now()}`,
-      name: "Kaladhar Creator",
-      email: "creator@kaladhar.studio",
-      provider: "google",
-      avatar: "https://lh3.googleusercontent.com/a/default-user=s96-c",
-      brandName: "Ethnic Studio",
-    };
-    setSessionUser(googleUser);
-    setIsLoading(false);
-  };
-
-  const loginWithGoogleCredential = async (credential: string) => {
-    setIsLoading(true);
-    const payload = parseGoogleJwt(credential);
-    if (!payload) {
-      setIsLoading(false);
-      throw new Error("Invalid Google credential received.");
+    if (newUser) {
+      localStorage.setItem(
+        LEGACY_USER_STORAGE_KEY,
+        JSON.stringify(newUser)
+      );
+    } else {
+      localStorage.removeItem(LEGACY_USER_STORAGE_KEY);
     }
-    const googleUser: User = {
-      id: payload.sub,
-      name: payload.name,
-      email: payload.email,
-      provider: "google",
-      avatar:
-        payload.picture ||
-        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(payload.name)}&backgroundColor=18181b,27272a&textColor=ffffff`,
-      brandName: payload.given_name ? `${payload.given_name}'s Studio` : "Kaladhar Studio",
-    };
-    setSessionUser(googleUser);
-    setIsLoading(false);
+  };
+
+  const loginWithEmail = async (
+    email: string,
+    password: string
+  ) => {
+    setIsLoading(true);
+
+    try {
+      const response = await apiLoginWithEmail(
+        email.trim(),
+        password
+      );
+
+      setSessionUser(mapBackendUser(response.user));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const signupWithEmail = async (
+    name: string,
+    email: string,
+    password: string,
+    brandName?: string
+  ) => {
+    setIsLoading(true);
+
+    try {
+      const response = await apiSignupWithEmail({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        brand_name: brandName?.trim() || undefined,
+      });
+
+      setSessionUser(mapBackendUser(response.user));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loginWithGoogleCredential = async (
+    credential: string
+  ) => {
+    setIsLoading(true);
+
+    try {
+      const response = await apiLoginWithGoogleCredential(credential);
+      const user = mapBackendUser(response.user);
+      user.avatar = `https://lh3.googleusercontent.com/a/default-user=s96-c`;
+      setSessionUser(user);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const logout = () => {
+    clearAuthToken();
     setSessionUser(null);
-    localStorage.removeItem(LEGACY_USER_STORAGE_KEY);
+    setPreferences(null);
+    setTheme("dark");
   };
 
-  const updateBrandName = (brandName: string) => {
+  const updateBrandName = async (brandName: string) => {
     if (!user) return;
-    const updated = { ...user, brandName };
-    setSessionUser(updated);
+    await apiUpdateUserProfile(user.name, brandName.trim());
+    setSessionUser({
+      ...user,
+      brandName: brandName.trim() || undefined,
+    });
   };
 
   return (
@@ -123,10 +234,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         loginWithEmail,
         signupWithEmail,
-        loginWithGoogle,
         loginWithGoogleCredential,
         logout,
         updateBrandName,
+        preferences,
+        preferencesLoading,
+        updatePreferences,
+        saveProfile,
       }}
     >
       {children}
@@ -136,8 +250,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
+
   if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error(
+      "useAuth must be used within an AuthProvider"
+    );
   }
+
   return context;
 }

@@ -1,27 +1,59 @@
 from pathlib import Path
+from io import BytesIO
 from urllib import response
 
 import pytest
 import uuid
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.api import reels
+from app.core.auth_dependencies import get_current_user, get_db
 from app.main import app
+from app.models.database_models import Base, CreditTransaction, Template, User
+from app.services import credit_service, reel_history_service
+from app.services import template_service
+from PIL import Image
 
 client = TestClient(app)
 
-from app.services import credit_service
+TEST_USER_ID = 987650
 
 
 @pytest.fixture(autouse=True)
-def reset_demo_credits(monkeypatch):
-    """Give each test a fresh demo credit account."""
-    with credit_service._lock:
-        credit_service._credit_accounts.pop(reels.DEMO_USER_ID, None)
+def reset_demo_credits(monkeypatch, tmp_path):
+    """Give each test a fresh persistent-credit database and authenticated user."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'reel-api-test.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    from app.core import job_store
+    monkeypatch.setattr(job_store, "SessionLocal", sessions)
+    user = User(id=TEST_USER_ID, email="reel-api@example.test", name="Reel API")
+    with sessions() as db:
+        db.add(user)
+        db.commit()
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    monkeypatch.setitem(app.dependency_overrides, get_db, override_db)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_current_user,
+        lambda: User(id=TEST_USER_ID, email="reel-api@example.test", name="Reel API"),
+    )
+    monkeypatch.setattr(credit_service, "SessionLocal", sessions)
+    monkeypatch.setattr(reel_history_service, "SessionLocal", sessions)
+    monkeypatch.setattr(reels, "SessionLocal", sessions)
     # Keep existing rendering/API tests deterministic; the queued-worker path
     # has separate tests that hold and release the executor task explicitly.
     monkeypatch.setattr(reels._REEL_EXECUTOR, "submit", lambda fn, *args: fn(*args))
+    yield
+    Base.metadata.drop_all(engine)
+    engine.dispose()
 
 
 def _generate_result(payload: dict) -> tuple[dict, dict]:
@@ -72,7 +104,7 @@ def test_browser_rendered_reel_import_is_disabled_without_charging_or_persisting
     )
 
     assert response.status_code == 410
-    assert "credit-accounted server pipeline" in response.json()["detail"].lower()
+    assert "project export endpoint" in response.json()["detail"].lower()
     assert deductions == []
     assert not output_dir.exists()
 
@@ -82,10 +114,19 @@ def test_generate_reel_rejects_empty_selection():
     assert status["reel_id"] == receipt["reel_id"]
     assert status["status"] == "failed"
     assert "empty" in status["error"].lower()
+    with credit_service.SessionLocal() as db:
+        rows = db.query(CreditTransaction).filter(
+            CreditTransaction.user_id == TEST_USER_ID,
+            CreditTransaction.reel_id == receipt["reel_id"],
+        ).order_by(CreditTransaction.id).all()
+    assert [(row.transaction_type, row.amount) for row in rows] == [
+        ("deduction", reels.REEL_GENERATION_COST),
+        ("refund", reels.REEL_GENERATION_COST),
+    ]
 
 
 def test_generate_reel_returns_available_and_required_credits(monkeypatch):
-    def insufficient_credits(_user_id: str, _amount: int) -> int:
+    def insufficient_credits(_user_id: str, _amount: int, **_kwargs) -> int:
         raise ValueError("Insufficient credits. Available: 3, required: 10")
 
     monkeypatch.setattr(reels, "deduct_credits", insufficient_credits)
@@ -221,9 +262,9 @@ def test_generation_returns_job_receipt_before_worker_finishes(monkeypatch):
 def test_duplicate_generation_request_id_reuses_job_without_second_charge(monkeypatch):
     deductions = []
     original_deduct = reels.deduct_credits
-    def count_deduction(user_id, amount):
+    def count_deduction(user_id, amount, **kwargs):
         deductions.append((user_id, amount))
-        return original_deduct(user_id, amount)
+        return original_deduct(user_id, amount, **kwargs)
     monkeypatch.setattr(reels, "deduct_credits", count_deduction)
     request_id = str(uuid.uuid4())
     payload = {"request_id": request_id, "selected_clips": []}
@@ -231,7 +272,7 @@ def test_duplicate_generation_request_id_reuses_job_without_second_charge(monkey
     second = client.post("/api/reels/generate", json=payload).json()
 
     assert first["reel_id"] == second["reel_id"]
-    assert deductions == [(reels.DEMO_USER_ID, reels.REEL_GENERATION_COST)]
+    assert deductions == [(TEST_USER_ID, reels.REEL_GENERATION_COST)]
 
 
 def test_generation_capacity_rejects_extra_job_without_charging(monkeypatch):
@@ -247,7 +288,7 @@ def test_generation_capacity_rejects_extra_job_without_charging(monkeypatch):
 
 def test_failed_background_render_removes_partial_output(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(reels, "OUTPUTS_DIR", tmp_path)
-    def fail(_request, reel_id):
+    def fail(_request, reel_id, _user_id):
         (tmp_path / f"{reel_id}.mp4").write_bytes(b"partial")
         raise HTTPException(status_code=500, detail="render failed")
     monkeypatch.setattr(reels, "_generate_reel_blocking", fail)
@@ -320,7 +361,7 @@ def test_generate_reel_with_analysis_job_id_resolves_source_dir(
     job_scoped_dir.mkdir(parents=True)
     (job_scoped_dir / synthetic_video_with_audio.name).write_bytes(synthetic_video_with_audio.read_bytes())
     analysis_job_id = "00000000-0000-0000-0000-000000000100"
-    create_analysis_job(analysis_job_id, source_dir=job_scoped_dir)
+    create_analysis_job(analysis_job_id, source_dir=job_scoped_dir, user_id=TEST_USER_ID)
 
     outputs_dir = tmp_path / "outputs"
     monkeypatch.setattr(reels, "OUTPUTS_DIR", outputs_dir)
@@ -362,7 +403,7 @@ def _completed_analysis_job_with_clips(job_id: str, source_dir: Path) -> None:
         selected_clips=batch_clips,
         all_clips=batch_clips,
     )
-    create_analysis_job(job_id, source_dir=source_dir)
+    create_analysis_job(job_id, source_dir=source_dir, user_id=TEST_USER_ID)
     update_analysis_job(
         job_id,
         status="completed",
@@ -416,7 +457,7 @@ def test_plan_reel_uses_exact_selected_clip_ids_for_same_source_file(tmp_path: P
         selected_clips=clips,
         all_clips=clips,
     )
-    create_analysis_job(job_id, source_dir=tmp_path)
+    create_analysis_job(job_id, source_dir=tmp_path, user_id=TEST_USER_ID)
     update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
 
     analyzed = client.get(f"/api/analysis/{job_id}").json()["clips"]
@@ -483,7 +524,7 @@ def test_plan_reel_rejects_selection_that_cannot_fit_target_duration(tmp_path: P
         selected_clips=clips,
         all_clips=clips,
     )
-    create_analysis_job(job_id, source_dir=tmp_path)
+    create_analysis_job(job_id, source_dir=tmp_path, user_id=TEST_USER_ID)
     update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
     clip_ids = [clip["clip_id"] for clip in client.get(f"/api/analysis/{job_id}").json()["clips"]]
 
@@ -515,7 +556,7 @@ def test_plan_reel_rejects_selected_clip_shorter_than_min_clip_duration(tmp_path
         selected_clips=clips,
         all_clips=clips,
     )
-    create_analysis_job(job_id, source_dir=tmp_path)
+    create_analysis_job(job_id, source_dir=tmp_path, user_id=TEST_USER_ID)
     update_analysis_job(job_id, status="completed", stage="completed", result=result, per_video_results=[])
     clip_ids = [clip["clip_id"] for clip in client.get(f"/api/analysis/{job_id}").json()["clips"]]
 
@@ -532,7 +573,7 @@ def test_plan_reel_estimate_accounts_for_registered_template(monkeypatch, tmp_pa
     _completed_analysis_job_with_clips(job_id, tmp_path)
     template_path = tmp_path / "template.png"
     template_path.write_bytes(b"registered template")
-    monkeypatch.setattr(reels, "_resolve_template_image", lambda _job_id: template_path)
+    monkeypatch.setattr(reels, "_resolve_template_image", lambda *_args: template_path)
 
     response = client.post(
         "/api/reels/plan",
@@ -554,7 +595,7 @@ def test_plan_reel_rejects_target_that_cannot_fit_template_and_full_end_card(
     _completed_analysis_job_with_clips(job_id, tmp_path)
     template_path = tmp_path / "template.png"
     template_path.write_bytes(b"registered template")
-    monkeypatch.setattr(reels, "_resolve_template_image", lambda _job_id: template_path)
+    monkeypatch.setattr(reels, "_resolve_template_image", lambda *_args: template_path)
 
     response = client.post(
         "/api/reels/plan",
@@ -572,7 +613,7 @@ def test_plan_reel_rejects_unknown_analysis_job():
     assert response.status_code == 404
 
 
-def test_generate_reel_from_plan_end_to_end(synthetic_video_with_audio: Path, monkeypatch, tmp_path: Path):
+def test_generate_reel_from_plan_end_to_end_with_private_template(synthetic_video_with_audio: Path, monkeypatch, tmp_path: Path):
     uploads_dir = tmp_path / "uploads"
     outputs_dir = tmp_path / "outputs"
     uploads_dir.mkdir()
@@ -597,7 +638,22 @@ def test_generate_reel_from_plan_end_to_end(synthetic_video_with_audio: Path, mo
         all_clips=[clip, unselected_clip],
     )
     job_id = "00000000-0000-0000-0000-000000000102"
-    create_analysis_job(job_id, source_dir=uploads_dir)
+    template_id = "00000000-0000-0000-0000-000000000202"
+    image_bytes = BytesIO()
+    Image.new("RGB", (64, 96), color=(210, 50, 80)).save(image_bytes, format="PNG")
+    with reels.SessionLocal() as db:
+        db.add(Template(
+            id=template_id,
+            user_id=TEST_USER_ID,
+            original_filename="opening.png",
+            storage_path=f"{TEST_USER_ID}/{template_id}/opening.png",
+            content_type="image/png",
+            file_size_bytes=len(image_bytes.getvalue()),
+            metadata_json={},
+        ))
+        db.commit()
+    monkeypatch.setattr(template_service, "_storage_request", lambda method, _path, *_args: image_bytes.getvalue() if method == "GET" else b"")
+    create_analysis_job(job_id, source_dir=uploads_dir, template_id=template_id, user_id=TEST_USER_ID)
     update_analysis_job(job_id, status="completed", stage="completed", per_video_results=[], result=batch_result)
 
     selected_id = client.get(f"/api/analysis/{job_id}").json()["clips"][0]["clip_id"]
@@ -608,6 +664,7 @@ def test_generate_reel_from_plan_end_to_end(synthetic_video_with_audio: Path, mo
     assert plan_response.status_code == 200
     reel_plan = plan_response.json()
     assert len(reel_plan["clips"]) == 1
+    assert reel_plan["template_seconds"] == 1.0
 
     _, status = _generate_result(
         {
@@ -676,7 +733,7 @@ def test_plan_reel_includes_thumbnail_urls(synthetic_video_with_audio: Path, tmp
         selected_clips=[clip], all_clips=[clip],
     )
     job_id = "00000000-0000-0000-0000-000000000103"
-    create_analysis_job(job_id, source_dir=source_dir)
+    create_analysis_job(job_id, source_dir=source_dir, user_id=TEST_USER_ID)
     update_analysis_job(job_id, status="completed", stage="completed", per_video_results=[], result=batch_result)
 
     response = client.post("/api/reels/plan", json={"analysis_job_id": job_id, "target_duration": 12.0})
@@ -832,11 +889,11 @@ def test_generate_reel_music_path_traversal_is_rejected(
     }
 
     from app.services.credit_service import get_balance
-    credits_before = get_balance(reels.DEMO_USER_ID)
+    credits_before = get_balance(TEST_USER_ID)
     _, status = _generate_result({"reel_plan": reel_plan})
     assert status["status"] == "failed"
     assert "not found" in status["error"].lower()
-    assert get_balance(reels.DEMO_USER_ID) == credits_before
+    assert get_balance(TEST_USER_ID) == credits_before
 
 
 def test_generate_reel_returns_duration_status_field(
@@ -895,14 +952,14 @@ def test_generate_reel_rejects_invalid_request_fields(payload):
 def test_plan_reel_rejects_invalid_request_fields(payload):
     from app.services.credit_service import get_balance
 
-    credits_before = get_balance(reels.DEMO_USER_ID)
+    credits_before = get_balance(TEST_USER_ID)
     response = client.post(
         "/api/reels/plan",
         json={"analysis_job_id": "00000000-0000-0000-0000-000000000104", **payload},
     )
 
     assert response.status_code == 422
-    assert get_balance(reels.DEMO_USER_ID) == credits_before
+    assert get_balance(TEST_USER_ID) == credits_before
 
 
 def test_plan_reel_accepts_documented_maximum_duration(tmp_path: Path):

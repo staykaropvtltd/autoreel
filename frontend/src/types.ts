@@ -146,6 +146,8 @@ export interface MusicTrack {
   display_name: string;
   duration: number;
   format: string;
+  is_custom?: boolean;
+  preview_url?: string;
 }
 
 export interface ReelPlan {

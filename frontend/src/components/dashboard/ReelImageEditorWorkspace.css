@@ -1646,4 +1646,184 @@
   }
 }
 
+/* Saved-project controls and export feedback */
+.workspace-header {
+  min-height: 82px;
+  height: auto;
+  padding: 10px 20px;
+  gap: 18px;
+}
+
+.workspace-header-left {
+  flex: 1;
+  gap: 16px;
+}
+
+.workspace-title-input {
+  width: min(260px, 22vw);
+}
+
+.workspace-meta-row {
+  flex-wrap: wrap;
+}
+
+.workspace-project-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.workspace-project-controls select {
+  max-width: 190px;
+  min-width: 145px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: #141418;
+  color: #d4d0d5;
+  font-size: 12px;
+}
+
+.workspace-save-status {
+  max-width: 130px;
+  overflow: hidden;
+  color: #8d8990;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-control-button {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 7px;
+  background: #17171c;
+  color: #e6e2e7;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.workspace-control-button:hover:not(:disabled) {
+  background: #222127;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.workspace-control-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.workspace-delete-button {
+  color: #e5a3a0;
+}
+
+.workspace-export-result {
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 auto;
+  margin: 10px 20px;
+  padding: 10px 42px 10px 12px;
+  position: relative;
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  border-radius: 10px;
+  background: linear-gradient(100deg, rgba(16, 52, 38, 0.48), rgba(18, 18, 22, 0.96) 50%);
+}
+
+.workspace-export-video {
+  display: block;
+  width: auto;
+  height: 112px;
+  max-width: 84px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: #050506;
+  object-fit: contain;
+}
+
+.workspace-export-copy {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+  color: #a9a5ac;
+  font-size: 12px;
+}
+
+.workspace-export-copy strong {
+  color: #e7fff3;
+  font-size: 14px;
+}
+
+.workspace-download-button {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 5px;
+  color: #eafff5;
+  text-decoration: none;
+}
+
+.workspace-export-dismiss {
+  position: absolute;
+  top: 10px;
+  right: 11px;
+  padding: 4px 7px;
+  border: 0;
+  background: transparent;
+  color: #8f9993;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+  .workspace-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    min-height: auto;
+    padding: 9px 14px;
+    gap: 8px 14px;
+  }
+
+  .workspace-header-left {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .workspace-project-controls {
+    padding-left: 2px;
+  }
+
+  .workspace-header-right {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .workspace-header {
+    align-items: center;
+    min-height: 56px;
+    height: auto;
+  }
+
+  .workspace-project-controls {
+    display: none;
+  }
+
+  .workspace-export-result {
+    margin: 7px 9px;
+    gap: 10px;
+  }
+
+  .workspace-export-video {
+    height: 88px;
+    max-width: 66px;
+  }
+}
+
 

@@ -23,8 +23,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { listMusic, musicPreviewUrl } from "../../api";
-import { photoReelExportStatus } from "../../photoReelExport";
+import { api, apiErrorMessage, listMusic, musicPreviewUrl, uploadMusic, uploadTemplateImage, getTemplatePreview, listEditorProjects, getEditorProject, saveEditorProject, exportEditorProject, deleteEditorProject, reelFileUrl } from "../../api";
 import type { MusicTrack } from "../../types";
 import "./ReelImageEditorWorkspace.css";
 
@@ -43,6 +42,7 @@ export type SlideTransition = "cut" | "crossfade" | "slide";
 
 export interface ImageSlide {
   id: string;
+  asset_id?: string;
   imageUrl: string;
   name: string;
   duration: number; // Duration in seconds (e.g., 1.5)
@@ -75,6 +75,7 @@ export interface OverlayConfig {
   brandWatermarkPosition: "top-right" | "top-left" | "bottom-center" | "none";
   // LOGO WATERMARK
   logoUrl?: string | null;
+  logo_asset_id?: string;
   logoFileName?: string;
   logoPosition: LogoPosition;
   logoSize: number; // width in canvas pixels (60 - 260px)
@@ -138,6 +139,17 @@ export default function ReelImageEditorWorkspace({
     initialProject?.category || "Product"
   );
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectOptions, setProjectOptions] = useState<Array<{id:string; title:string}>>([]);
+  const [saveStatus, setSaveStatus] = useState("Unsaved changes");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ reelId: string; url: string } | null>(null);
+  const hydratingRef = useRef(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef<Promise<string | null> | null>(null);
+  const saveAgainRef = useRef(false);
+  const latestSaveRef = useRef<() => Promise<string | null>>(() => Promise.resolve(null));
 
   // Strictly initialize slides with user-provided images only — NO phantom or dummy fallback!
   const [slides, setSlides] = useState<ImageSlide[]>(
@@ -212,6 +224,164 @@ export default function ReelImageEditorWorkspace({
 
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  const restoreProject = useCallback(async (id: string) => {
+    hydratingRef.current = true;
+    setSaveStatus("Loading project…");
+    try {
+      const saved = await getEditorProject(id);
+      const hydratedSlides = await Promise.all(saved.slides.map(async (slide) => {
+        const blob = await getTemplatePreview(slide.asset_id);
+        return { ...slide, imageUrl: URL.createObjectURL(blob), asset_id: slide.asset_id } as ImageSlide;
+      }));
+      const savedLogoId = (saved.overlays as Record<string, unknown>).logo_asset_id;
+      const logoBlob = typeof savedLogoId === "string" ? await getTemplatePreview(savedLogoId).catch(() => null) : null;
+      setProjectId(saved.id); setProjectTitle(saved.title); setCategory(saved.category);
+      localStorage.setItem("reelkaro_active_editor_project", saved.id);
+      setSlides(hydratedSlides); setOverlays((prev) => ({ ...prev, ...(saved.overlays as Partial<OverlayConfig>), logoUrl: logoBlob ? URL.createObjectURL(logoBlob) : null }));
+      setAudioConfig((prev) => ({ ...prev, ...(saved.audio as Partial<AudioConfig>), trackUrl: null }));
+      if (saved.reel_id) {
+        setExportResult({ reelId: saved.reel_id, url: "" });
+        try {
+          const downloaded = await api.get<Blob>(reelFileUrl(saved.reel_id), { responseType: "blob", timeout: 0 });
+          setExportResult({ reelId: saved.reel_id, url: URL.createObjectURL(downloaded.data) });
+        } catch {
+          setEditorError("This project has a completed export, but its preview could not be loaded. Use Download MP4 to retry.");
+        }
+      } else setExportResult(null);
+      setSaveStatus("Saved");
+    } catch {
+      setEditorError("Could not load the saved project. Please try again.");
+      setSaveStatus("Load failed");
+    } finally { hydratingRef.current = false; }
+  }, []);
+
+  useEffect(() => {
+    listEditorProjects().then((items) => {
+      setProjectOptions(items.map(({id,title}) => ({id,title})));
+      const lastId = localStorage.getItem("reelkaro_active_editor_project");
+      if (!initialProject && lastId && items.some((item) => item.id === lastId)) void restoreProject(lastId);
+      else if (lastId) localStorage.removeItem("reelkaro_active_editor_project");
+    })
+      .catch(() => setProjectOptions([]));
+  }, [restoreProject]);
+
+  useEffect(() => {
+    const initialSlides = initialProject?.slides;
+    if (!initialSlides?.length || !initialSlides.some((slide) => !slide.asset_id && slide.imageUrl.startsWith("blob:"))) return;
+    let cancelled = false;
+    void Promise.all(initialSlides.map(async (slide) => {
+      if (slide.asset_id || !slide.imageUrl.startsWith("blob:")) return slide;
+      try {
+        const blob = await fetch(slide.imageUrl).then((response) => response.blob());
+        const mime = ["image/jpeg", "image/png", "image/webp"].includes(blob.type) ? blob.type : "image/png";
+        const extension = mime === "image/jpeg" ? "jpg" : mime.split("/")[1];
+        const file = new File([blob], `${slide.name || "photo"}.${extension}`, { type: mime });
+        const saved = await uploadTemplateImage(file);
+        return { ...slide, asset_id: saved.template_id };
+      } catch { return slide; }
+    })).then((restored) => {
+      if (!cancelled) setSlides(restored);
+    });
+    return () => { cancelled = true; };
+  }, [initialProject]);
+
+  const persistProject = useCallback((): Promise<string | null> => {
+    if (saveInFlightRef.current) {
+      saveAgainRef.current = true;
+      return saveInFlightRef.current;
+    }
+    if (hydratingRef.current || slides.length === 0) return Promise.resolve(null);
+    if (slides.some((slide) => !slide.asset_id)) {
+      setSaveStatus("Upload slides to save"); return Promise.resolve(null);
+    }
+    const request = (async (): Promise<string | null> => {
+      setIsSaving(true); setSaveStatus("Saving…");
+      try {
+        const saved = await saveEditorProject(projectId, {
+        title: projectTitle || "Untitled Reel", category,
+        slides: slides.map(({ id, asset_id, name, duration, motion, transition, fitMode }) => ({ id, asset_id: asset_id!, name, duration, motion, transition, fitMode })),
+        overlays: { ...overlays, logoUrl: undefined, logoFileName: undefined },
+        audio: { ...audioConfig, trackUrl: null },
+        settings: { aspect_ratio: "9:16", width: 1080, height: 1920, fps: 30, total_duration: Number(slides.reduce((sum, slide) => sum + slide.duration, 0).toFixed(3)) },
+        });
+        setProjectId(saved.id); setSaveStatus("Saved");
+        localStorage.setItem("reelkaro_active_editor_project", saved.id);
+        setProjectOptions((items) => [{id:saved.id,title:saved.title}, ...items.filter((item) => item.id !== saved.id)]);
+        return saved.id;
+      } catch (error) {
+        setSaveStatus("Save failed"); setEditorError(apiErrorMessage(error, "Project could not be saved. Check your connection and try again."));
+        return null;
+      } finally {
+        setIsSaving(false); saveInFlightRef.current = null;
+        if (saveAgainRef.current) {
+          saveAgainRef.current = false;
+          setTimeout(() => { void latestSaveRef.current(); }, 0);
+        }
+      }
+    })();
+    saveInFlightRef.current = request;
+    return request;
+  }, [projectId, projectTitle, category, slides, overlays, audioConfig]);
+
+  useEffect(() => { latestSaveRef.current = persistProject; }, [persistProject]);
+
+  const handleExport = async () => {
+    setEditorError(null); setExportResult(null);
+    const savedId = await persistProject();
+    if (!savedId) return;
+    setIsExporting(true); setSaveStatus("Rendering MP4…");
+    let reelId: string;
+    try {
+      const result = await exportEditorProject(savedId);
+      reelId = result.reel_id;
+      setExportResult({ reelId, url: "" });
+      setSaveStatus("Export ready");
+    } catch (error: any) {
+      setSaveStatus("Export failed");
+      setEditorError(error?.response?.data?.detail || "Export failed. Review your images and soundtrack, then try again.");
+      setIsExporting(false);
+      return;
+    }
+    try {
+      const response = await api.get<Blob>(reelFileUrl(reelId), { responseType: "blob", timeout: 0 });
+      setExportResult({ reelId, url: URL.createObjectURL(response.data) });
+      setSaveStatus("Export ready");
+    } catch {
+      setSaveStatus("Export ready");
+      setEditorError("The MP4 rendered successfully, but its preview could not be loaded. Use Download MP4 to retry.");
+    } finally { setIsExporting(false); }
+  };
+
+  const retryExportPreview = async () => {
+    if (!exportResult) return;
+    setEditorError(null);
+    try {
+      const response = await api.get<Blob>(reelFileUrl(exportResult.reelId), { responseType: "blob", timeout: 0 });
+      setExportResult({ ...exportResult, url: URL.createObjectURL(response.data) });
+    } catch (error) {
+      setEditorError(apiErrorMessage(error, "The MP4 is ready, but download failed. Check your connection and try again."));
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectId || !window.confirm("Delete this saved Image-to-Reel project?")) return;
+    try {
+      await deleteEditorProject(projectId);
+      setProjectOptions((items) => items.filter((item) => item.id !== projectId));
+      localStorage.removeItem("reelkaro_active_editor_project");
+      setProjectId(null); setSlides([]); setProjectTitle("Untitled Reel"); setExportResult(null); setSaveStatus("Project deleted");
+    } catch (error) {
+      setEditorError(apiErrorMessage(error, "Could not delete this project. Please try again."));
+    }
+  };
+
+  useEffect(() => {
+    if (hydratingRef.current || slides.length === 0) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { void persistProject(); }, 900);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [projectTitle, category, slides, overlays, audioConfig, persistProject]);
+
   useEffect(() => {
     listMusic()
       .then((tracks) => {
@@ -261,24 +431,32 @@ export default function ReelImageEditorWorkspace({
 
   // Preload logo image if set, or auto-fetch backend brand logo if empty
   useEffect(() => {
-    if (!overlays.logoUrl) {
-      const defaultLogoUrl = `${import.meta.env.VITE_API_BASE_URL}/branding/logo`;
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        imageCacheRef.current.set(defaultLogoUrl, img);
-        setOverlays((prev) => {
-          if (prev.logoUrl) return prev;
-          return {
-            ...prev,
-            logoUrl: defaultLogoUrl,
-            logoFileName: "Kaladhar_Brand_Logo.jpeg",
-            showLogo: true,
+    if (!overlays.logoUrl || overlays.logoUrl.endsWith("/branding/logo")) {
+      let cancelled = false;
+      const loadBrandLogo = async () => {
+        try {
+          const branding = await api.get<{ logo_url?: string }>("/branding");
+          if (cancelled || !branding.data.logo_url) return;
+          const { data } = await api.get<Blob>("/branding/logo", { responseType: "blob" });
+          if (cancelled || !data.size) return;
+          const logoUrl = URL.createObjectURL(data);
+          const img = new Image();
+          img.onload = () => {
+            if (cancelled) return;
+            imageCacheRef.current.set(logoUrl, img);
+            setOverlays((prev) => ({ ...prev, logoUrl, logoFileName: "Brand logo", showLogo: true }));
+            setImagesLoadedVersion((v) => v + 1);
           };
-        });
-        setImagesLoadedVersion((v) => v + 1);
+          img.src = logoUrl;
+        } catch {
+        // No configured logo is a supported state.
+        }
       };
-      img.src = defaultLogoUrl;
+      void loadBrandLogo();
+      return () => { cancelled = true; };
+    }
+
+    if (!overlays.logoUrl) {
       return;
     }
 
@@ -817,32 +995,35 @@ export default function ReelImageEditorWorkspace({
   /* =======================================================
      SLIDE ACTIONS
      ======================================================= */
-  const handleAddPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     const newSlides: ImageSlide[] = [];
     let hasNonImage = false;
 
-    Array.from(files).forEach((file, index) => {
+    for (const [index, file] of Array.from(files).entries()) {
       if (
-        file.type.startsWith("image/") ||
-        /\.(jpe?g|png|webp|avif|bmp|tiff)$/i.test(file.name)
+        ["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
+        /\.(jpe?g|png|webp)$/i.test(file.name)
       ) {
-        const url = URL.createObjectURL(file);
-        newSlides.push({
-          id: `slide-${Date.now()}-${index}`,
-          imageUrl: url,
-          name: file.name.replace(/\.[^/.]+$/, ""),
-          duration: 1.8,
-          motion: (slides.length + index) % 2 === 0 ? "zoom_in" : "pan_right",
-          transition: "crossfade",
-          fitMode: "cover",
-        });
+        try {
+          const stored = await uploadTemplateImage(file);
+          const blob = await getTemplatePreview(stored.template_id);
+          newSlides.push({
+            id: `slide-${Date.now()}-${index}`, asset_id: stored.template_id,
+            imageUrl: URL.createObjectURL(blob),
+            name: file.name.replace(/\.[^/.]+$/, ""), duration: 1.8,
+            motion: (slides.length + index) % 2 === 0 ? "zoom_in" : "pan_right",
+            transition: "crossfade", fitMode: "cover",
+          });
+        } catch {
+          setEditorError(`Could not upload ${file.name}. Check the private image storage configuration and try again.`);
+        }
       } else {
         hasNonImage = true;
       }
-    });
+    }
 
     if (hasNonImage) {
       setEditorError(
@@ -910,29 +1091,24 @@ export default function ReelImageEditorWorkspace({
   /* =======================================================
      BRAND LOGO HANDLERS
      ======================================================= */
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (!dataUrl) return;
-
+    try {
+      const stored = await uploadTemplateImage(file);
+      const blob = await getTemplatePreview(stored.template_id);
+      const dataUrl = URL.createObjectURL(blob);
       const img = new Image();
       img.onload = () => {
         imageCacheRef.current.set(dataUrl, img);
-        setOverlays((prev) => ({
-          ...prev,
-          logoUrl: dataUrl,
-          logoFileName: file.name,
-          showLogo: true,
-        }));
+        setOverlays((prev) => ({ ...prev, logoUrl: dataUrl, logo_asset_id: stored.template_id, logoFileName: file.name, showLogo: true }));
         setImagesLoadedVersion((v) => v + 1);
       };
       img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setEditorError("Could not upload the logo image. Please try again.");
+    }
     e.target.value = "";
   };
 
@@ -963,7 +1139,7 @@ export default function ReelImageEditorWorkspace({
   /* =======================================================
      SOUNDTRACK HANDLERS ("CHOOSE ANY SONG IN THE WORLD")
      ======================================================= */
-  const handleDeviceAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDeviceAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -979,13 +1155,13 @@ export default function ReelImageEditorWorkspace({
       });
     };
 
-    setAudioConfig({
-      trackId: `custom-device-${Date.now()}`,
-      trackTitle: file.name,
-      trackUrl: url,
-      volume: audioConfig.volume,
-      offset: 0,
-    });
+    try {
+      const uploaded = await uploadMusic(file);
+      setAudioConfig({ trackId: uploaded.id, trackTitle: uploaded.display_name || file.name, trackUrl: url, volume: audioConfig.volume, offset: 0 });
+    } catch {
+      URL.revokeObjectURL(url);
+      setEditorError("Could not upload the soundtrack. Choose a catalog track or try another audio file.");
+    }
   };
 
   const handleApplyWebAudioUrl = () => {
@@ -1101,6 +1277,16 @@ export default function ReelImageEditorWorkspace({
               <span className="workspace-badge mono">30 FPS</span>
             </div>
           </div>
+
+          <div className="workspace-project-controls">
+            <select aria-label="Open saved editor project" value="" onChange={(event) => { if (event.target.value) void restoreProject(event.target.value); }}>
+                <option value="">Open saved project…</option>
+                {projectOptions.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
+            </select>
+            <span className="workspace-save-status" role="status" aria-live="polite">{saveStatus}</span>
+            <button className="workspace-control-button" type="button" onClick={() => void persistProject()} disabled={isSaving || slides.length === 0}>{isSaving ? "Saving…" : "Save"}</button>
+            {projectId && <button className="workspace-control-button workspace-delete-button" type="button" onClick={() => void handleDeleteProject()} disabled={isExporting}>Delete</button>}
+          </div>
         </div>
 
         <div className="workspace-header-right">
@@ -1116,19 +1302,22 @@ export default function ReelImageEditorWorkspace({
           <button
             type="button"
             className="workspace-export-btn"
-            disabled={!photoReelExportStatus.enabled}
-            aria-describedby="photo-reel-export-notice"
-            title={photoReelExportStatus.reason}
+            disabled={isSaving || isExporting || slides.length === 0 || slides.some((slide) => !slide.asset_id)}
+            onClick={() => void handleExport()}
           >
-            <span className="btn-label-desktop">EXPORT UNAVAILABLE</span>
-            <span className="btn-label-mobile">UNAVAILABLE</span>
+            <span className="btn-label-desktop">{isExporting ? "RENDERING…" : "EXPORT REEL"}</span>
+            <span className="btn-label-mobile">{isExporting ? "RENDERING…" : "EXPORT"}</span>
           </button>
         </div>
       </header>
 
-      <p id="photo-reel-export-notice" className="workspace-export-notice" role="status">
-        {photoReelExportStatus.reason}
-      </p>
+      {exportResult && <div className="workspace-export-result" role="status">
+        {exportResult.url ? <>
+          <video controls playsInline src={exportResult.url} className="workspace-export-video" />
+          <div className="workspace-export-copy"><strong>Export ready</strong><span>Your MP4 has been rendered.</span><a href={exportResult.url} download={`reel-${exportResult.reelId}.mp4`} className="workspace-control-button workspace-download-button">Download MP4</a></div>
+        </> : <div className="workspace-export-copy"><strong>Export ready</strong><span>Your MP4 has been rendered.</span><button type="button" className="workspace-control-button workspace-download-button" onClick={() => void retryExportPreview()}>Load preview / Download MP4</button></div>}
+        <button type="button" className="workspace-export-dismiss" onClick={() => setExportResult(null)} aria-label="Dismiss export preview">Dismiss</button>
+      </div>}
 
       {/* MOBILE SEGMENTED VIEW BAR (<768px) */}
       <nav className="workspace-mobile-tab-bar" aria-label="Editor Panels">

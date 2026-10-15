@@ -5,14 +5,14 @@ from pathlib import Path
 from threading import BoundedSemaphore
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from app.api.videos import DEMO_RAW_DIR, RAW_UPLOADS_DIR
 from app.core.job_store import (
     create_analysis_job,
     get_analysis_job,
-    get_template_image,
     get_upload_job,
     update_analysis_job,
 )
@@ -20,8 +20,10 @@ from app.core.config import get_settings
 from app.services.batch_selector import select_best_clips
 from app.services.clip_identity import ensure_analysis_clip_ids
 from app.services.clip_selector import analyze_video
-from app.api.templates import TEMPLATE_IMAGES_DIR
 from app.core.security import safe_filename
+from app.core.auth_dependencies import get_current_user, get_db
+from app.models.database_models import Template, User
+from sqlalchemy.orm import Session
 from app.schemas.batch import BatchClip
 from app.services.video_metadata import get_video_metadata
 
@@ -130,6 +132,9 @@ def _run_analysis_job(
                         filename=video_paths[index].name,
                         message=_PER_FILE_ERROR,
                     )
+            completed_count = len(results) - sum(result is None for result in results)
+            progress = 10 + int(65 * completed_count / max(len(video_paths), 1))
+            update_analysis_job(job_id, stage="analyzing", progress=progress)
 
         per_video_results = [result for result in results if result is not None]
         file_errors = [failure for failure in failures if failure is not None]
@@ -183,15 +188,23 @@ def _run_analysis_job(
 
 
 @router.post("/analysis/analyze", response_model=AnalysisStartResponse)
-def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -> AnalysisStartResponse:
+def start_analysis(
+    request: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisStartResponse:
     if request.template_id is not None:
-        template = get_template_image(str(request.template_id))
+        template = db.scalar(select(Template).where(
+            Template.id == str(request.template_id), Template.user_id == current_user.id
+        ))
         if template is None:
             raise HTTPException(status_code=404, detail="Template not found")
-        template_root = TEMPLATE_IMAGES_DIR.resolve()
-        template_path = Path(template.get("path", "")).resolve()
-        if not template_path.is_relative_to(template_root) or not template_path.is_file():
-            raise HTTPException(status_code=400, detail="Template image is unavailable")
+        from app.services.template_service import validate_storage_path, TemplateStorageError
+        try:
+            validate_storage_path(template.storage_path, current_user.id, template.id)
+        except TemplateStorageError as exc:
+            raise HTTPException(status_code=500, detail="Template metadata is invalid") from exc
 
     if request.use_demo:
         if not DEMO_RAW_DIR.exists() or not any(DEMO_RAW_DIR.glob("*.mp4")):
@@ -201,7 +214,7 @@ def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -
     else:
         if not request.job_id:
             raise HTTPException(status_code=400, detail="job_id is required")
-        upload_job = get_upload_job(str(request.job_id))
+        upload_job = get_upload_job(str(request.job_id), current_user.id)
         if upload_job is None:
             raise HTTPException(status_code=404, detail=f"Upload job not found: {request.job_id}")
         source_dir = RAW_UPLOADS_DIR / str(request.job_id)
@@ -241,6 +254,7 @@ def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -
             analysis_job_id,
             source_dir=source_dir,
             template_id=str(request.template_id) if request.template_id else None,
+            user_id=current_user.id,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Template not found") from exc
@@ -255,12 +269,14 @@ def start_analysis(request: AnalyzeRequest, background_tasks: BackgroundTasks) -
 
 
 @router.get("/analysis/{job_id}", response_model=AnalysisStatusResponse, response_model_exclude_none=True)
-def get_analysis(job_id: uuid.UUID) -> AnalysisStatusResponse:
+def get_analysis(
+    job_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+) -> AnalysisStatusResponse:
     job_id = str(job_id)
-    job = get_analysis_job(job_id)
+    job = get_analysis_job(job_id, current_user.id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Analysis job not found: {job_id}")
-
     if job["status"] in ("queued", "processing"):
         return AnalysisStatusResponse(job_id=uuid.UUID(job_id), status=job["status"], stage=job["stage"])
 

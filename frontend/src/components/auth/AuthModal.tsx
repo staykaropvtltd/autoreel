@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mail, Lock, User as UserIcon, Building2, Eye, EyeOff, X, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { getGoogleClientId, loadGoogleGsiScript } from "../../services/googleAuth";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -44,7 +45,7 @@ export default function AuthModal({
 }: AuthModalProps) {
   const { theme } = useTheme();
   const isLight = theme === "light";
-  const { loginWithGoogle, loginWithEmail, signupWithEmail, isLoading } = useAuth();
+  const { loginWithGoogleCredential, loginWithEmail, signupWithEmail, isLoading } = useAuth();
 
   const [mode, setMode] = useState<"signin" | "signup">(initialMode);
   const [showPassword, setShowPassword] = useState(false);
@@ -55,24 +56,66 @@ export default function AuthModal({
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [googleClientConfigured, setGoogleClientConfigured] = useState(false);
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen, onClose);
+  const googleButtonContainerRef = useRef<HTMLDivElement>(null);
+  const verifyCredentialRef = useRef(loginWithGoogleCredential);
+  const onSuccessRef = useRef(onSuccess);
+  const onCloseRef = useRef(onClose);
+  verifyCredentialRef.current = loginWithGoogleCredential;
+  onSuccessRef.current = onSuccess;
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const clientId = getGoogleClientId();
+    setGoogleClientConfigured(Boolean(clientId));
+    if (!clientId) return;
+
+    let active = true;
+    void loadGoogleGsiScript().then((loaded) => {
+      if (!active || !loaded || !window.google?.accounts?.id) {
+        setGoogleClientConfigured(false);
+        return;
+      }
+      setGoogleClientConfigured(true);
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response) => {
+          if (!response.credential) return;
+          void verifyCredentialRef.current(response.credential).then(() => {
+            setIsSuccess(true);
+            window.setTimeout(() => {
+              setIsSuccess(false);
+              onSuccessRef.current?.();
+              onCloseRef.current();
+            }, 700);
+          }).catch(() => {
+            setError("Google sign-in could not be verified. Try again or use email sign-in.");
+          });
+        },
+        cancel_on_tap_outside: true,
+      });
+      window.setTimeout(() => {
+        const container = googleButtonContainerRef.current;
+        if (!active || !container || !window.google?.accounts?.id) return;
+        container.innerHTML = "";
+        window.google.accounts.id.renderButton(container, {
+          type: "standard",
+          theme: isLight ? "outline" : "filled_black",
+          size: "large",
+          text: mode === "signin" ? "signin_with" : "signup_with",
+          shape: "pill",
+          width: 360,
+          logo_alignment: "left",
+        });
+      }, 0);
+    }).catch(() => setGoogleClientConfigured(false));
+
+    return () => { active = false; };
+  }, [isOpen, isLight, mode]);
 
   if (!isOpen) return null;
-
-  const handleGoogleSignIn = async () => {
-    try {
-      setError(null);
-      await loginWithGoogle();
-      setIsSuccess(true);
-      setTimeout(() => {
-        setIsSuccess(false);
-        onSuccess?.();
-        onClose();
-      }, 700);
-    } catch {
-      setError("Failed to sign in with Google. Please try again.");
-    }
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -235,19 +278,22 @@ export default function AuthModal({
 
               {/* 1. PRIMARY SOCIAL ACTION: Official Google Sign-In Button */}
               <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={isLoading}
-                  className={`w-full py-3 px-4 rounded-2xl border flex items-center justify-center gap-3 text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-xs active:scale-[0.99] ${
-                    isLight
-                      ? "bg-white hover:bg-neutral-50 border-neutral-300 text-[#18181B] hover:shadow-md"
-                      : "bg-[#181820] hover:bg-[#22222C] border-white/20 text-white"
-                  }`}
-                >
-                  <GoogleIcon className="w-5 h-5 shrink-0" />
-                  <span>Continue with Google</span>
-                </button>
+                {googleClientConfigured ? (
+                  <div ref={googleButtonContainerRef} className="w-full flex justify-center min-h-[40px]" />
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className={`w-full py-3 px-4 rounded-2xl border flex items-center justify-center gap-3 text-xs sm:text-sm font-semibold opacity-60 ${
+                      isLight
+                        ? "bg-white border-neutral-300 text-[#18181B]"
+                        : "bg-[#181820] border-white/20 text-white"
+                    }`}
+                  >
+                    <GoogleIcon className="w-5 h-5 shrink-0" />
+                    <span>Google sign-in is not configured</span>
+                  </button>
+                )}
 
                 {/* Subtle Divider */}
                 <div className="flex items-center gap-3">

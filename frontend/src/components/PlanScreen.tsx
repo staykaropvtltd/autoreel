@@ -10,6 +10,7 @@ import type {
   ShotRole,
 } from "../types";
 import CreditQuoteNotice from "./CreditQuoteNotice";
+import { useAuth } from "../context/AuthContext";
 
 interface PlanScreenProps {
   targetDuration: number;
@@ -74,6 +75,7 @@ export default function PlanScreen({
   selectedMusic,
   onMusicChange,
 }: PlanScreenProps) {
+    const { preferences } = useAuth();
     const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([]);
   const [musicLoading, setMusicLoading] = useState(true);
   const [musicError, setMusicError] = useState<string | null>(null);
@@ -106,6 +108,11 @@ export default function PlanScreen({
       cancelled = true;
     };
   }, []);
+  useEffect(() => {
+    if (selectedMusic || !preferences?.preferred_music_track_id) return;
+    const preferred = musicTracks.find((track) => track.id === preferences.preferred_music_track_id);
+    if (preferred) onMusicChange(preferred);
+  }, [musicTracks, preferences?.preferred_music_track_id, selectedMusic, onMusicChange]);
   const handleMusicUpload = async (
   event: React.ChangeEvent<HTMLInputElement>,
 ) => {

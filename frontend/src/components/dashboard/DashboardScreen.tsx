@@ -11,7 +11,15 @@ import { useTheme } from "../../context/ThemeContext";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import IOKnob from "../landing/IOKnob";
 import Magnetic from "../Magnetic";
-
+import {
+  downloadAuthenticatedVideo as apiDownloadAuthenticatedVideo,
+  getReelHistory,
+  reelFileUrl,
+} from "../../api";
+import type { AxiosResponse } from "axios";
+import { api } from "../../api";
+import type { UserPreferences, UserPreferencesUpdate } from "../../api";
+import AuthenticatedVideoPreview from "../AuthenticatedVideoPreview";
 import {
   LayoutGrid,
   Film,
@@ -44,6 +52,7 @@ import {
 } from "lucide-react";
 
 import "./Dashboard.css";
+
 
 /* =========================================================
    TYPES
@@ -124,6 +133,18 @@ const SAMPLE_PROJECTS_PRESET: ReelProject[] = [
   },
 ];
 
+async function downloadAuthenticatedVideo(
+  videoUrl: string,
+  filename: string,
+): Promise<void> {
+  try {
+    await apiDownloadAuthenticatedVideo(videoUrl, filename);
+  } catch (error) {
+    console.error("Authenticated video download failed:", error);
+    alert("Unable to download the reel. Please sign in again and retry.");
+  }
+}
+
 /* =========================================================
    DASHBOARD
    ========================================================= */
@@ -133,7 +154,7 @@ export default function DashboardScreen({
   onBackToLanding,
   creditQuote,
 }: DashboardScreenProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, saveProfile, preferences, preferencesLoading, updatePreferences } = useAuth();
   const { theme } = useTheme();
 
   const isLight = theme === "light";
@@ -142,6 +163,7 @@ export default function DashboardScreen({
   const storageKey = user
     ? `kaladhar_reels_${user.id}`
     : "kaladhar_reels_guest";
+
 
   /* =======================================================
      PROJECT STATE
@@ -181,6 +203,10 @@ export default function DashboardScreen({
     return [];
   });
 
+  const [isEditingManualReel, setIsEditingManualReel] = useState(() =>
+    typeof localStorage !== "undefined" && Boolean(localStorage.getItem("reelkaro_active_editor_project"))
+  );
+
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(projects));
@@ -188,6 +214,69 @@ export default function DashboardScreen({
       // Ignore storage errors
     }
   }, [projects, storageKey]);
+
+useEffect(() => {
+  if (isEditingManualReel) return;
+  const controller = new AbortController();
+
+  const loadReelHistory = async () => {
+    try {
+      const history = await getReelHistory(controller.signal);
+
+      const savedProjects: ReelProject[] = history.items
+        .filter((item) => item.status === "completed")
+        .map((item) => ({
+          id: item.reel_id,
+          title: item.title || "Untitled Reel",
+          category: item.source === "image_to_reel" ? "Image-to-Reel" : "Other",
+          durationSeconds: 0,
+          resolution: "Video",
+          videoUrl: reelFileUrl(item.reel_id),
+          thumbnailUrl: "",
+          createdAt: item.created_at
+            ? new Date(item.created_at).toLocaleDateString()
+            : "Previously generated",
+          status: "ready",
+          productPrice: "",
+        }));
+
+      setProjects((current) => {
+        const merged = [...current];
+
+        // Add database records without duplicating existing reel IDs.
+        for (const saved of [...savedProjects].reverse()) {
+          const existingIndex = merged.findIndex(
+            (project) => project.id === saved.id,
+          );
+
+          if (existingIndex >= 0) {
+            merged[existingIndex] = {
+              ...merged[existingIndex],
+              title: saved.title,
+              category: saved.category,
+              createdAt: saved.createdAt,
+              videoUrl: saved.videoUrl,
+              status: "ready",
+            };
+          } else {
+            merged.unshift(saved);
+          }
+        }
+
+        return merged;
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.error("Failed to load reel history:", error);
+      }
+    }
+  };
+
+  void loadReelHistory();
+
+  return () => controller.abort();
+}, [isEditingManualReel]);
+
 
   /* =======================================================
      UI STATE
@@ -235,7 +324,6 @@ export default function DashboardScreen({
   /* =======================================================
      MANUAL REEL WORKSPACE (PIPELINE 1)
      ======================================================= */
-  const [isEditingManualReel, setIsEditingManualReel] = useState(false);
   const [manualEditorProject, setManualEditorProject] =
     useState<Partial<ManualReelProject> | null>(null);
 
@@ -460,6 +548,7 @@ const handleSaveProfile = (
   name: string,
   brand: string
 ) => {
+  return saveProfile(name, brand).then(() => {
   const updatedProfile = {
     name,
     brand,
@@ -476,7 +565,18 @@ const handleSaveProfile = (
   } catch {
     // Ignore storage errors
   }
+  });
 };
+
+useEffect(() => {
+  if (!user) return;
+  setProfileName(user.name || "Creator");
+  void api.get<{ name?: string }>("/branding").then(({ data }) => {
+    if (typeof data.name === "string" && data.name.trim()) setProfileBrand(data.name);
+  }).catch(() => {
+    setProfileBrand(user.brandName || "Your Studio");
+  });
+}, [user?.id]);
 
   /* =======================================================
      FILTER PROJECTS
@@ -626,6 +726,7 @@ const handleSaveProfile = (
      ======================================================= */
 
   const handleLogout = () => {
+    localStorage.removeItem("reelkaro_active_editor_project");
     logout();
     onBackToLanding();
   };
@@ -925,6 +1026,9 @@ const handleSaveProfile = (
       displayName={displayName}
       displayBrand={displayBrand}
       onSaveProfile={handleSaveProfile}
+      preferences={preferences}
+      preferencesLoading={preferencesLoading}
+      onUpdatePreferences={updatePreferences}
       onLogout={handleLogout}
     />
 
@@ -1330,13 +1434,23 @@ const handleSaveProfile = (
                     >
                       <div className="list-project-info">
                         <div className="list-thumbnail">
-                          {project.thumbnailUrl ? (
-                            <img src={project.thumbnailUrl} alt={project.title} />
-                          ) : project.videoUrl ? (
-                            <video src={project.videoUrl} muted playsInline preload="metadata" aria-label={`${project.title} video preview`} />
-                          ) : (
-                            <span className="list-thumbnail-empty" role="status">Video unavailable</span>
-                          )}
+
+{project.thumbnailUrl ? (
+  <img
+    src={project.thumbnailUrl}
+    alt={project.title}
+  />
+) : project.videoUrl ? (
+  <AuthenticatedVideoPreview
+    videoUrl={project.videoUrl}
+    title={project.title}
+  />
+) : (
+  <span className="list-thumbnail-empty" role="status">
+    Video unavailable
+  </span>
+)}
+
 
                           <div className="list-play-overlay">
                             {playingCardId ===
@@ -1394,20 +1508,25 @@ const handleSaveProfile = (
                           <Maximize2 />
                         </button>
 
-                        {project.videoUrl ? <a
-                          href={project.videoUrl}
-                          download={`${project.title
-                            .toLowerCase()
-                            .replace(
-                              /[^a-z0-9]+/g,
-                              "_"
-                            )}.mp4`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Download"
-                        >
-                          <Download />
-                        </a> : (
+                        {project.videoUrl ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadAuthenticatedVideo(
+                                project.videoUrl!,
+                                `${project.title
+                                  .toLowerCase()
+                                  .replace(
+                                    /[^a-z0-9]+/g,
+                                    "_"
+                                  )}.mp4`
+                              )
+                            }
+                            title="Download"
+                          >
+                            <Download />
+                          </button>
+                        ) : (
                           <button type="button" disabled title="Video unavailable">
                             <Download />
                           </button>
@@ -1759,68 +1878,67 @@ const handleSaveProfile = (
               {activeCinemaReel.videoUrl && !cinemaVideoUnavailable ? (
                 <>
                   {cinemaVideoLoading && <p className="cinema-video-loading" role="status">Loading reel…</p>}
-                  <video
-                    src={activeCinemaReel.videoUrl}
-                    controls
-                    autoPlay
-                    loop
-                    playsInline
-                    onLoadStart={() => setCinemaVideoLoading(true)}
-                    onCanPlay={() => setCinemaVideoLoading(false)}
-                    onPlaying={() => setCinemaVideoLoading(false)}
-                    onError={() => {
-                      setCinemaVideoLoading(false);
-                      setCinemaVideoUnavailable(true);
-                    }}
-                  />
+                  <AuthenticatedVideoPreview
+  videoUrl={activeCinemaReel.videoUrl}
+  title={activeCinemaReel.title}
+  controls
+  autoPlay
+  loop
+  muted={false}
+  onLoadStart={() => setCinemaVideoLoading(true)}
+  onCanPlay={() => setCinemaVideoLoading(false)}
+  onPlaying={() => setCinemaVideoLoading(false)}
+  onError={() => {
+    setCinemaVideoLoading(false);
+    setCinemaVideoUnavailable(true);
+  }}
+/>
                 </>
               ) : (
                 <p role="status">Video unavailable</p>
               )}
             </div>
 
-            <div className="cinema-actions">
-              {activeCinemaReel.videoUrl && !cinemaVideoUnavailable ? <a
-                href={
-                  activeCinemaReel.videoUrl
-                }
-                download={`kaladhar_${activeCinemaReel.id}.mp4`}
-                target="_blank"
-                rel="noreferrer"
-                className="cinema-download"
-              >
-                <Download />
 
-                DOWNLOAD MP4
-              </a> : <span role="status">Download unavailable</span>}
+<div className="cinema-actions">
+  {activeCinemaReel.videoUrl && !cinemaVideoUnavailable ? (
+    <button
+      type="button"
+      onClick={() =>
+        void downloadAuthenticatedVideo(
+          activeCinemaReel.videoUrl!,
+          `kaladhar_${activeCinemaReel.id}.mp4`
+        )
+      }
+      className="cinema-download"
+    >
+      <Download />
+      DOWNLOAD MP4
+    </button>
+  ) : (
+    <span role="status">Download unavailable</span>
+  )}
 
-              <button
-                type="button"
-                onClick={(e) =>
-                  handleShare(
-                    activeCinemaReel,
-                    e
-                  )
-                }
-                disabled={!activeCinemaReel.videoUrl || cinemaVideoUnavailable}
-                className="cinema-share"
-              >
-                {copiedId ===
-                activeCinemaReel.id ? (
-                  <>
-                    <Check />
+  <button
+    type="button"
+    onClick={(e) => handleShare(activeCinemaReel, e)}
+    disabled={!activeCinemaReel.videoUrl || cinemaVideoUnavailable}
+    className="cinema-share"
+  >
+    {copiedId === activeCinemaReel.id ? (
+      <>
+        <Check />
+        COPIED
+      </>
+    ) : (
+      <>
+        <Share2 />
+        SHARE
+      </>
+    )}
+  </button>
+</div>
 
-                    COPIED
-                  </>
-                ) : (
-                  <>
-                    <Share2 />
-
-                    SHARE
-                  </>
-                )}
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -2096,18 +2214,31 @@ function DashfolioReelCard({
       {/* VIDEO */}
       <div className="reel-media">
         {project.videoUrl && !videoUnavailable ? (
-          <>
-            <video
-              ref={videoRef}
-              src={project.videoUrl}
-              onError={() => setVideoUnavailable(true)}
-              preload="metadata"
-              loop
-              muted={isMuted}
-              playsInline
-              className="reel-video playing"
-            />
-          </>
+          <AuthenticatedVideoPreview
+            videoRef={videoRef}
+            videoUrl={project.videoUrl}
+            title={project.title}
+            loop
+            muted={isMuted}
+            playsInline
+            className="reel-video playing"
+            onCanPlay={() => {
+              if (isPlaying && videoRef.current) {
+                videoRef.current.play().catch(() => {});
+              }
+            }}
+            onError={() => setVideoUnavailable(true)}
+            unavailableFallback={
+              <div className="reel-video-unavailable flex h-full w-full items-center justify-center bg-neutral-900 text-sm text-neutral-400" role="status">
+                Video unavailable
+              </div>
+            }
+            loadingFallback={
+              <div className="reel-video-loading flex h-full w-full items-center justify-center bg-neutral-900 text-sm text-neutral-400" role="status">
+                Loading reel…
+              </div>
+            }
+          />
         ) : (
           <div className="reel-video-unavailable flex h-full w-full items-center justify-center bg-neutral-900 text-sm text-neutral-400" role="status">
             Video unavailable
@@ -2252,15 +2383,20 @@ function DashfolioReelCard({
           )}
 
           {project.videoUrl && !videoUnavailable ? (
-            <a
-              href={project.videoUrl}
-              download={`${project.title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.mp4`}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void downloadAuthenticatedVideo(
+                  project.videoUrl!,
+                  `${project.title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.mp4`
+                );
+              }}
+              title="Save"
             >
               <Download />
               <span>Save</span>
-            </a>
+            </button>
           ) : (
             <button type="button" disabled title="Video unavailable">
               <Download />
@@ -2293,10 +2429,22 @@ function PreviousWorkCard({
       {/* PREVIEW */}
       <div className="reel-preview">
 
-        <img
-          src={project.thumbnailUrl}
-          alt={project.title}
-        />
+        {project.thumbnailUrl ? (
+          <img
+            src={project.thumbnailUrl}
+            alt={project.title}
+          />
+        ) : project.videoUrl ? (
+          <AuthenticatedVideoPreview
+            videoUrl={project.videoUrl}
+            title={project.title}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-neutral-900 text-sm text-neutral-400" role="status">
+            Video unavailable
+          </div>
+        )}
 
         <div className="reel-gradient" />
 
@@ -2372,13 +2520,26 @@ function PreviousWorkCard({
             <span>View</span>
           </button>
 
-          <a
-            href={project.videoUrl}
-            download
-          >
-            <Download />
-            <span>Save</span>
-          </a>
+          {project.videoUrl ? (
+            <button
+              type="button"
+              onClick={() =>
+                void downloadAuthenticatedVideo(
+                  project.videoUrl!,
+                  `${project.title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.mp4`
+                )
+              }
+              title="Save"
+            >
+              <Download />
+              <span>Save</span>
+            </button>
+          ) : (
+            <button type="button" disabled title="Video unavailable">
+              <Download />
+              <span>Unavailable</span>
+            </button>
+          )}
 
         </div>
 
@@ -2904,6 +3065,9 @@ function SettingsPage({
   displayName,
   displayBrand,
   onSaveProfile,
+  preferences,
+  preferencesLoading,
+  onUpdatePreferences,
   onLogout,
 }: {
   displayName: string;
@@ -2911,7 +3075,10 @@ function SettingsPage({
   onSaveProfile: (
     name: string,
     brand: string
-  ) => void;
+  ) => Promise<void>;
+  preferences: UserPreferences | null;
+  preferencesLoading: boolean;
+  onUpdatePreferences: (changes: UserPreferencesUpdate) => Promise<void>;
   onLogout: () => void;
 }) {
   const [reelFormat, setReelFormat] =
@@ -2931,6 +3098,21 @@ function SettingsPage({
 
   const [compactLayout, setCompactLayout] =
     useState(false);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!preferences) return;
+    setAutoSave(preferences.auto_save);
+    setNotifications(preferences.notifications);
+    setCompactLayout(preferences.compact_layout);
+    setReelFormat(preferences.default_resolution);
+    setAspectRatio(preferences.default_aspect_ratio);
+  }, [preferences?.user_id, preferences?.updated_at]);
+
+  const persistPreference = (change: UserPreferencesUpdate) => {
+    setPreferenceError(null);
+    void onUpdatePreferences(change).catch(() => setPreferenceError("Could not save this preference. Please retry."));
+  };
 
   const [showFormatMenu, setShowFormatMenu] =
     useState(false);
@@ -2961,16 +3143,19 @@ function SettingsPage({
     setEditProfileOpen(true);
   };
 
-  const saveProfile = () => {
+  const saveProfile = async () => {
     const name =
       editName.trim() || "Creator";
 
     const brand =
       editBrand.trim() || "Your Studio";
 
-    onSaveProfile(name, brand);
-
-    setEditProfileOpen(false);
+    try {
+      await onSaveProfile(name, brand);
+      setEditProfileOpen(false);
+    } catch {
+      setPreferenceError("Could not save your profile. Please retry.");
+    }
   };
 
   return (
@@ -3117,6 +3302,39 @@ function SettingsPage({
 
           <div className="settings-list-card">
 
+            <div className="settings-list-row">
+              <div><strong>Default reel format</strong><p>Choose the settings used when preparing a new reel.</p></div>
+              <select aria-label="Default reel resolution" value={reelFormat} onChange={(event) => {
+                const value = event.target.value as UserPreferences["default_resolution"];
+                setReelFormat(value);
+                persistPreference({ default_resolution: value });
+              }}>
+                <option value="1080x1920">1080 × 1920</option>
+                <option value="1080x1080">1080 × 1080</option>
+                <option value="1920x1080">1920 × 1080</option>
+                <option value="1080x1350">1080 × 1350</option>
+              </select>
+              <select aria-label="Default reel aspect ratio" value={aspectRatio} onChange={(event) => {
+                const value = event.target.value as UserPreferences["default_aspect_ratio"];
+                setAspectRatio(value);
+                persistPreference({ default_aspect_ratio: value });
+              }}>
+                <option value="9:16">9:16</option><option value="1:1">1:1</option>
+                <option value="16:9">16:9</option><option value="4:5">4:5</option>
+              </select>
+              <select aria-label="Default frame rate" value={preferences?.default_frame_rate ?? 30} onChange={(event) => {
+                persistPreference({ default_frame_rate: Number(event.target.value) as UserPreferences["default_frame_rate"] });
+              }}>
+                {[24, 25, 30, 50, 60].map((fps) => <option key={fps} value={fps}>{fps} FPS</option>)}
+              </select>
+              <select aria-label="Default reel duration" value={preferences?.default_target_duration ?? 15} onChange={(event) => {
+                const value = Number(event.target.value);
+                persistPreference({ default_target_duration: value });
+              }}>
+                {[15, 30, 45].map((duration) => <option key={duration} value={duration}>{duration} seconds</option>)}
+              </select>
+            </div>
+
             {/* AUTO SAVE */}
 
             <div className="settings-list-row">
@@ -3136,9 +3354,10 @@ function SettingsPage({
                 className={`settings-toggle ${
                   autoSave ? "active" : ""
                 }`}
-                onClick={() =>
-                  setAutoSave(!autoSave)
-                }
+                onClick={() => {
+                  setAutoSave(!autoSave);
+                  persistPreference({ auto_save: !autoSave });
+                }}
                 aria-label="Toggle auto-save"
               >
                 <span />
@@ -3166,9 +3385,10 @@ function SettingsPage({
                 className={`settings-toggle ${
                   notifications ? "active" : ""
                 }`}
-                onClick={() =>
-                  setNotifications(!notifications)
-                }
+                onClick={() => {
+                  setNotifications(!notifications);
+                  persistPreference({ notifications: !notifications });
+                }}
                 aria-label="Toggle notifications"
               >
                 <span />
@@ -3196,9 +3416,10 @@ function SettingsPage({
                 className={`settings-toggle ${
                   compactLayout ? "active" : ""
                 }`}
-                onClick={() =>
-                  setCompactLayout(!compactLayout)
-                }
+                onClick={() => {
+                  setCompactLayout(!compactLayout);
+                  persistPreference({ compact_layout: !compactLayout });
+                }}
                 aria-label="Toggle compact layout"
               >
                 <span />
@@ -3207,6 +3428,12 @@ function SettingsPage({
             </div>
 
           </div>
+
+          {(preferencesLoading || preferenceError) && (
+            <p role="status" className="mt-3 text-sm text-[var(--color-text-secondary)]">
+              {preferenceError || "Loading saved preferences…"}
+            </p>
+          )}
 
         </section>
 

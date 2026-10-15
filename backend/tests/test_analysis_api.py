@@ -6,11 +6,44 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.api import analysis, videos
+from app.core.auth_dependencies import get_current_user, get_db
 from app.main import app
+from app.models.database_models import Base, Template, User
 
 client = TestClient(app)
+TEST_USER_ID = 898001
+
+
+@pytest.fixture(autouse=True)
+def authenticated_analysis_db(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'analysis-api.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    from app.core import job_store
+    monkeypatch.setattr(job_store, "SessionLocal", sessions)
+    with sessions() as db:
+        db.add_all([
+            User(id=TEST_USER_ID, email="analysis@example.test", name="Analysis"),
+            User(id=TEST_USER_ID + 1, email="other-analysis@example.test", name="Other"),
+        ])
+        db.commit()
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=TEST_USER_ID, email="analysis@example.test", name="Analysis"
+    )
+    yield sessions
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(engine)
+    engine.dispose()
 
 
 def _poll_until_done(job_id: str, timeout: float = 30.0) -> dict:
@@ -40,7 +73,7 @@ def _create_analysis_job(tmp_path: Path) -> str:
     from app.core.job_store import create_analysis_job
 
     job_id = str(uuid.uuid4())
-    create_analysis_job(job_id, source_dir=tmp_path)
+    create_analysis_job(job_id, source_dir=tmp_path, user_id=TEST_USER_ID)
     return job_id
 
 
@@ -106,7 +139,7 @@ def test_completed_analysis_response_omits_nullable_nested_clip_fields():
         processing_time_seconds=0.1,
         all_clips=[clip],
     )
-    create_analysis_job(job_id, source_dir=Path.cwd())
+    create_analysis_job(job_id, source_dir=Path.cwd(), user_id=TEST_USER_ID)
     update_analysis_job(
         job_id,
         status="completed",
@@ -152,22 +185,45 @@ def test_analyze_rejects_unregistered_template():
     assert response.status_code == 404
 
 
-def test_analyze_accepts_registered_template(monkeypatch, tmp_path: Path):
+def test_analyze_rejects_another_users_template(authenticated_analysis_db):
+    template_id = str(uuid.uuid4())
+    with authenticated_analysis_db() as db:
+        db.add(Template(
+            id=template_id,
+            user_id=TEST_USER_ID,
+            original_filename="private.png",
+            storage_path=f"{TEST_USER_ID}/{template_id}/private.png",
+            content_type="image/png",
+            file_size_bytes=100,
+            metadata_json={},
+        ))
+        db.commit()
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=TEST_USER_ID + 1, email="other-analysis@example.test", name="Other"
+    )
+    response = client.post("/api/analysis/analyze", json={"use_demo": True, "template_id": template_id})
+    assert response.status_code == 404
+
+
+def test_analyze_accepts_registered_template(monkeypatch, tmp_path: Path, authenticated_analysis_db):
     from types import SimpleNamespace
 
-    from app.core.job_store import create_template_image
-
     template_id = str(uuid.uuid4())
-    template_root = tmp_path / "templates"
-    template_root.mkdir()
-    template_path = template_root / "registered.png"
-    template_path.write_bytes(b"template")
-    create_template_image(template_id, "registered.png", str(template_path))
+    with authenticated_analysis_db() as db:
+        db.add(Template(
+            id=template_id,
+            user_id=TEST_USER_ID,
+            original_filename="registered.png",
+            storage_path=f"{TEST_USER_ID}/{template_id}/registered.png",
+            content_type="image/png",
+            file_size_bytes=100,
+            metadata_json={},
+        ))
+        db.commit()
     demo_dir = tmp_path / "demo"
     demo_dir.mkdir()
     (demo_dir / "source.mp4").write_bytes(b"test")
 
-    monkeypatch.setattr(analysis, "TEMPLATE_IMAGES_DIR", template_root)
     monkeypatch.setattr(analysis, "DEMO_RAW_DIR", demo_dir)
     monkeypatch.setattr(analysis, "get_video_metadata", lambda _path: SimpleNamespace(duration=1.0))
     monkeypatch.setattr(analysis, "_run_analysis_job", lambda *_args: None)
@@ -189,14 +245,14 @@ def test_analyze_rejects_missing_or_invalid_upload_source(monkeypatch, tmp_path:
     upload_id = str(uuid.uuid4())
     uploads_dir = tmp_path / "uploads"
     (uploads_dir / upload_id).mkdir(parents=True)
-    create_upload_job(upload_id, [{"filename": "missing.mp4", "size": 100}])
+    create_upload_job(upload_id, [{"filename": "missing.mp4", "size": 100}], TEST_USER_ID)
     monkeypatch.setattr(analysis, "RAW_UPLOADS_DIR", uploads_dir)
 
     response = client.post("/api/analysis/analyze", json={"job_id": upload_id})
     assert response.status_code == 400
 
     (uploads_dir / upload_id / "invalid.mp4").write_bytes(b"not a video")
-    create_upload_job(upload_id, [{"filename": "invalid.mp4", "size": 12}])
+    create_upload_job(upload_id, [{"filename": "invalid.mp4", "size": 12}], TEST_USER_ID)
     response = client.post("/api/analysis/analyze", json={"job_id": upload_id})
     assert response.status_code == 400
 
@@ -354,3 +410,14 @@ def test_analysis_timeout_is_terminal_and_late_work_cannot_mark_success(monkeypa
 
     update_analysis_job(job_id, status="completed", stage="completed", result=_fake_batch_result())
     assert client.get(f"/api/analysis/{job_id}").json()["status"] == "failed"
+
+
+def test_analysis_cannot_use_another_users_upload_job():
+    from app.core.job_store import create_upload_job
+    upload_id = str(uuid.uuid4())
+    create_upload_job(upload_id, [{"filename": "private.mp4", "size": 10}], TEST_USER_ID)
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=TEST_USER_ID + 1, email="other-analysis@example.test", name="Other"
+    )
+    response = client.post("/api/analysis/analyze", json={"job_id": upload_id})
+    assert response.status_code == 404

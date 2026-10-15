@@ -3,9 +3,14 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from sqlalchemy.orm import Session
 
 from app.core.job_store import create_upload_job
 from app.core.security import safe_filename
+from fastapi import Depends
+from app.core.auth_dependencies import get_current_user, get_db
+from app.models.database_models import User
+from app.services.asset_service import list_user_assets
 
 router = APIRouter()
 
@@ -23,7 +28,10 @@ _CHUNK_SIZE = 1024 * 1024
 
 
 @router.post("/videos/upload")
-async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
+async def upload_videos(
+    files: list[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -42,7 +50,17 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
     total_size = 0
     try:
         for upload in files:
-            filename = safe_filename(upload.filename or "")
+            original_filename = upload.filename or ""
+            if (
+                not original_filename
+                or original_filename in {".", ".."}
+                or "/" in original_filename
+                or "\\" in original_filename
+                or Path(original_filename).name != original_filename
+            ):
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            filename = safe_filename(original_filename)
             if filename in seen_filenames:
                 raise HTTPException(status_code=400, detail=f"Duplicate filename in upload: {filename}")
             seen_filenames.add(filename)
@@ -76,7 +94,7 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise
 
-    create_upload_job(job_id, uploaded_files)
+    create_upload_job(job_id, uploaded_files, current_user.id)
     return {"job_id": job_id, "status": "uploaded", "files": uploaded_files}
 
 
@@ -84,3 +102,22 @@ async def upload_videos(files: list[UploadFile] = File(...)) -> dict:
 def demo_status() -> dict:
     available = DEMO_RAW_DIR.exists() and any(DEMO_RAW_DIR.glob("*.mp4"))
     return {"available": available}
+
+
+
+@router.get("/assets")
+def get_my_assets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assets = list_user_assets(db, current_user.id)
+
+    return [
+        {
+            "id": asset.id,
+            "asset_type": asset.asset_type,
+            "filename": asset.original_filename,
+            "created_at": asset.created_at,
+        }
+        for asset in assets
+    ]
