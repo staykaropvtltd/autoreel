@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from PIL import Image
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.database_models import BrandSettings
@@ -126,9 +127,15 @@ def get_or_create_brand_settings(db: Session, user_id: int) -> BrandSettings:
             text_color=defaults.get("text_color") or "#FFFFFF",
             options={"logo_placement": defaults.get("logo_placement", "start")},
         )
-        db.add(settings)
-        db.commit()
-        db.refresh(settings)
+        try:
+            db.add(settings)
+            db.commit()
+            db.refresh(settings)
+        except IntegrityError:
+            db.rollback()
+            settings = db.scalar(select(BrandSettings).where(BrandSettings.user_id == user_id))
+            if settings is None:
+                raise
     return settings
 
 

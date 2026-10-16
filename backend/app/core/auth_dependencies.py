@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.security import decode_access_token
-from app.models.database_models import CreditBalance, User
+from app.models.database_models import CreditBalance, CreditTransaction, User
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/auth/login",
@@ -36,6 +36,15 @@ def get_or_create_demo_user(db: Session) -> User:
         db.add(demo_user)
         db.flush()
         db.add(CreditBalance(user_id=demo_user.id, balance=50))
+        db.add(
+            CreditTransaction(
+                user_id=demo_user.id,
+                transaction_type="addition",
+                amount=50,
+                balance_after=50,
+                description="Initial credit grant",
+            )
+        )
         db.commit()
         db.refresh(demo_user)
     else:
@@ -45,6 +54,15 @@ def get_or_create_demo_user(db: Session) -> User:
         )
         if bal is None:
             db.add(CreditBalance(user_id=demo_user.id, balance=50))
+            db.add(
+                CreditTransaction(
+                    user_id=demo_user.id,
+                    transaction_type="addition",
+                    amount=50,
+                    balance_after=50,
+                    description="Initial credit grant",
+                )
+            )
             db.commit()
 
     return demo_user

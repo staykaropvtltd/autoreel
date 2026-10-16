@@ -1068,6 +1068,21 @@ def get_reel(
 ) -> ReelJobStatusResponse:
     reel_id_str = str(reel_id)
 
+    job = get_reel_job(reel_id_str, current_user.id)
+
+    if job is not None:
+        return ReelJobStatusResponse(
+            reel_id=reel_id_str,
+            status=job["status"],
+            stage=job["stage"],
+            error=job.get("error"),
+            result=(
+                ReelGenerateResponse(**job["response"])
+                if job.get("response")
+                else None
+            ),
+        )
+
     record = db.scalar(
         select(ReelHistory).where(
             ReelHistory.reel_id == reel_id_str,
@@ -1081,24 +1096,12 @@ def get_reel(
             detail="Reel not found",
         )
 
-    job = get_reel_job(reel_id_str, current_user.id)
-
-    if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Reel status is unavailable",
-        )
-
     return ReelJobStatusResponse(
         reel_id=reel_id_str,
-        status=job["status"],
-        stage=job["stage"],
-        error=job.get("error"),
-        result=(
-            ReelGenerateResponse(**job["response"])
-            if job.get("response")
-            else None
-        ),
+        status=record.status,
+        stage=record.status,
+        error=None,
+        result=None,
     )
 @router.post("/reels/import", status_code=410)
 def import_rendered_reel() -> None:

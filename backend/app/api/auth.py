@@ -10,7 +10,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models.database_models import CreditBalance, User
+from app.models.database_models import CreditBalance, CreditTransaction, User
 from app.schemas.auth import (
     AuthResponse,
     GoogleLoginRequest,
@@ -59,6 +59,15 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
         # Create the initial credit balance only once.
         db.add(CreditBalance(user_id=user.id, balance=50))
+        db.add(
+            CreditTransaction(
+                user_id=user.id,
+                transaction_type="addition",
+                amount=50,
+                balance_after=50,
+                description="Initial credit grant",
+            )
+        )
         db.commit()
         db.refresh(user)
     except IntegrityError:
@@ -135,6 +144,15 @@ def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)
         try:
             db.flush()
             db.add(CreditBalance(user_id=user.id, balance=50))
+            db.add(
+                CreditTransaction(
+                    user_id=user.id,
+                    transaction_type="addition",
+                    amount=50,
+                    balance_after=50,
+                    description="Initial credit grant",
+                )
+            )
             db.commit()
             db.refresh(user)
         except IntegrityError:

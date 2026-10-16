@@ -20,6 +20,9 @@ if not DATABASE_URL:
 # Validate the URL before creating the engine
 parsed_url = make_url(DATABASE_URL)
 
+if parsed_url.drivername in {"postgres", "postgresql"}:
+    parsed_url = parsed_url.set(drivername="postgresql+psycopg")
+
 if parsed_url.drivername.startswith("sqlite"):
     engine = create_engine(parsed_url)
 else:
