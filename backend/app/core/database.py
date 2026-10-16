@@ -20,14 +20,17 @@ if not DATABASE_URL:
 # Validate the URL before creating the engine
 parsed_url = make_url(DATABASE_URL)
 
-# Supabase PostgreSQL connection
-engine = create_engine(
-    parsed_url,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=5,
-    connect_args={"connect_timeout": 10},
-)
+if parsed_url.drivername.startswith("sqlite"):
+    engine = create_engine(parsed_url)
+else:
+    # Supabase PostgreSQL connection
+    engine = create_engine(
+        parsed_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+        connect_args={"connect_timeout": 10},
+    )
 
 SessionLocal = sessionmaker(
     bind=engine,

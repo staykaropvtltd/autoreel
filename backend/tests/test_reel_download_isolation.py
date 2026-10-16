@@ -46,7 +46,7 @@ def download_case(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = override_db
     monkeypatch.setattr(reels, "OUTPUTS_DIR", outputs)
-    monkeypatch.setattr(reels, "get_reel_job", lambda _reel_id: None)
+    monkeypatch.setattr(reels, "get_reel_job", lambda _reel_id, *_args, **_kwargs: None)
 
     def auth_headers(user_id):
         with sessions() as db:
@@ -91,7 +91,7 @@ def test_reel_download_is_limited_to_history_owner(download_case):
 def test_reel_download_uses_saved_history_path_when_job_has_no_path(download_case, monkeypatch):
     client, reel_id, auth_headers, _sessions = download_case
     owner_headers = auth_headers(301)
-    monkeypatch.setattr(reels, "get_reel_job", lambda _reel_id: {"output_path": None})
+    monkeypatch.setattr(reels, "get_reel_job", lambda _reel_id, *_args, **_kwargs: {"output_path": None})
 
     response = client.get(f"/api/reels/{reel_id}/download", headers=owner_headers)
     assert response.status_code == 200
