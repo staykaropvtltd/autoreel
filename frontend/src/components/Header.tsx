@@ -16,7 +16,7 @@ export default function Header({ branding }: HeaderProps) {
         
         {/* BRAND */}
         <div className="flex items-center gap-3 min-w-0">
-          {!logoFailed && (
+          {branding.logo_url && !logoFailed && (
             <img
               src={branding.logo_url}
               alt={branding.name}

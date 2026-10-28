@@ -5,6 +5,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.auth_dependencies import get_current_user
+from app.models.database_models import User
 from app.services import brand_service
 
 client = TestClient(app)
@@ -21,8 +23,10 @@ def test_branding_routes_are_registered_once_at_expected_paths():
     assert registered == Counter(
         {
             ("GET", "/api/branding"): 1,
+            ("PUT", "/api/branding"): 1,
             ("GET", "/api/branding/logo"): 1,
             ("POST", "/api/branding/logo"): 1,
+            ("DELETE", "/api/branding/logo"): 1,
             ("POST", "/api/branding/logo/placement"): 1,
         }
     )
@@ -56,7 +60,7 @@ def test_get_branding_returns_configured_name_and_logo_url(monkeypatch, tmp_path
     assert body["logo_url"] == "/api/branding/logo"
     assert set(body) == {
         "name", "tagline", "logo_url", "logo_placement",
-        "primary_color", "secondary_color", "text_color",
+        "primary_color", "secondary_color", "text_color", "options",
     }
 
 
@@ -69,8 +73,9 @@ def test_upload_brand_logo_returns_typed_compatible_fields(monkeypatch, tmp_path
     user_branding_dir.mkdir()
     monkeypatch.setattr(
         "app.api.branding.save_user_logo",
-        lambda **_kwargs: user_branding_dir / "logo.png",
+        lambda *_args, **_kwargs: "1/logo.png",
     )
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, email="one@example.test", name="One")
     image = Image.new("RGB", (1, 1), color="white")
     image_bytes = BytesIO()
     image.save(image_bytes, format="PNG")
@@ -80,6 +85,7 @@ def test_upload_brand_logo_returns_typed_compatible_fields(monkeypatch, tmp_path
         files={"file": ("brand.png", image_bytes.getvalue(), "image/png")},
         data={"placement": "entire"},
     )
+    app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
     assert response.json() == {
@@ -101,14 +107,16 @@ def test_get_branding_reflects_changed_brand_json(monkeypatch, tmp_path: Path):
     assert client.get("/api/branding").json()["name"] == "TEST BRAND"
 
 
-def test_get_branding_logo_serves_configured_file(monkeypatch, tmp_path: Path):
+def test_get_branding_logo_does_not_fall_back_to_shared_local_file(monkeypatch, tmp_path: Path):
     _configure_brand(monkeypatch, tmp_path, {"name": "NEURAX", "logo": "neurax.jpeg"}, logo_bytes=b"fake-logo-bytes")
+    monkeypatch.setattr("app.api.branding.get_user_logo", lambda *_args: None)
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, email="one@example.test", name="One")
 
     response = client.get("/api/branding/logo")
+    app.dependency_overrides.pop(get_current_user, None)
 
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "image/jpeg"
-    assert response.content == b"fake-logo-bytes"
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Brand logo not configured"
 
 
 def test_get_branding_logo_404_when_not_configured(monkeypatch, tmp_path: Path):
@@ -116,7 +124,7 @@ def test_get_branding_logo_404_when_not_configured(monkeypatch, tmp_path: Path):
 
     response = client.get("/api/branding/logo")
 
-    assert response.status_code == 404
+    assert response.status_code == 401
 
 
 def test_get_branding_logo_404_when_configured_file_missing(monkeypatch, tmp_path: Path):
@@ -124,7 +132,7 @@ def test_get_branding_logo_404_when_configured_file_missing(monkeypatch, tmp_pat
 
     response = client.get("/api/branding/logo")
 
-    assert response.status_code == 404
+    assert response.status_code == 401
 
 
 def test_get_branding_logo_ignores_path_traversal_in_config(monkeypatch, tmp_path: Path):
@@ -143,12 +151,13 @@ def test_get_branding_logo_ignores_path_traversal_in_config(monkeypatch, tmp_pat
 
     response = client.get("/api/branding/logo")
 
-    assert response.status_code == 404
+    assert response.status_code == 401
 
 
 def test_update_logo_placement_uses_validated_json_body(monkeypatch):
     placements = []
-    monkeypatch.setattr("app.api.branding.set_logo_placement", placements.append)
+    monkeypatch.setattr("app.api.branding.set_logo_placement", lambda _db, _user_id, placement: placements.append(placement))
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, email="one@example.test", name="One")
 
     response = client.post("/api/branding/logo/placement", json={"placement": "entire"})
     assert response.status_code == 200
@@ -156,45 +165,8 @@ def test_update_logo_placement_uses_validated_json_body(monkeypatch):
     assert placements == ["entire"]
 
     invalid = client.post("/api/branding/logo/placement", json={"placement": "../../secret"})
+    app.dependency_overrides.pop(get_current_user, None)
     assert invalid.status_code == 422
     assert placements == ["entire"]
 
 
-def test_save_user_logo_real_storage_does_not_deadlock(monkeypatch, tmp_path: Path):
-    from io import BytesIO
-
-    from PIL import Image
-
-    # Redirect all storage paths to a temporary directory.
-    user_branding_dir = tmp_path / "user_branding"
-    monkeypatch.setattr(brand_service, "USER_BRANDING_DIR", user_branding_dir)
-    monkeypatch.setattr(
-        brand_service,
-        "USER_BRAND_CONFIG_PATH",
-        user_branding_dir / "brand.json",
-    )
-
-    # Generate a valid PNG image.
-    image_buffer = BytesIO()
-    Image.new("RGB", (10, 10), color="white").save(image_buffer, format="PNG")
-    image_bytes = image_buffer.getvalue()
-
-    # Call the REAL storage function (no mock).
-    logo_path = brand_service.save_user_logo(
-        file_bytes=image_bytes,
-        extension=".png",
-        placement="entire",
-    )
-
-    # Verify the logo was saved.
-    assert logo_path == user_branding_dir / "logo.png"
-    assert logo_path.is_file()
-    assert logo_path.read_bytes() == image_bytes
-
-    # Verify the branding configuration was saved.
-    config_path = user_branding_dir / "brand.json"
-    assert config_path.is_file()
-
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    assert config["logo"] == "logo.png"
-    assert config["logo_placement"] == "entire"

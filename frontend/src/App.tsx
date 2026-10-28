@@ -110,7 +110,7 @@ const WORKFLOW_RECOVERY_MESSAGE = "This workflow step is no longer available aft
 
 
 export default function App() {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, preferences, updatePreferences } = useAuth();
   const { theme } = useTheme();
 
   const [screen, setScreenState] = useState<Screen>("landing");
@@ -157,6 +157,16 @@ export default function App() {
 
   const [selectedMusic, setSelectedMusic] =
   useState<MusicTrack | null>(null);
+
+  useEffect(() => {
+    if (preferences) setTargetDuration(preferences.default_target_duration);
+  }, [preferences?.user_id, preferences?.default_target_duration]);
+
+  useEffect(() => {
+    if (preferences && preferences.theme !== theme) {
+      void updatePreferences({ theme }).catch((error) => console.error("Could not save theme preference", error));
+    }
+  }, [theme, preferences?.user_id]);
 
   const [planLoading, setPlanLoading] =
     useState(false);
@@ -1412,7 +1422,10 @@ const handleContinueToPlan = async () => {
   onBack={() => setScreen("review")}
   error={error}
   selectedMusic={selectedMusic}
-  onMusicChange={setSelectedMusic}
+  onMusicChange={(track) => {
+    setSelectedMusic(track);
+    void updatePreferences({ preferred_music_track_id: track?.id ?? null }).catch((error) => console.error("Could not save music preference", error));
+  }}
 />
             )}
 

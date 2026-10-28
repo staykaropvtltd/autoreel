@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
 import axios from "axios";
+import { uploadBrandLogo } from "../../api";
+import { invalidateMissingBrandLogoCache } from "../../branding";
 import "./BrandLogoPage.css";
 
 type LogoPlacement = "start" | "entire";
@@ -18,9 +20,7 @@ interface BrandLogoPageProps {
   ) => void;
 }
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL 
-).replace(/\/+$/, "");
+
 
 export default function BrandLogoPage({
   project,
@@ -136,22 +136,8 @@ export default function BrandLogoPage({
     setUploading(true);
 
     try {
-      const formData = new FormData();
-
-      formData.append(
-        "file",
-        logoFile
-      );
-
-      formData.append(
-        "placement",
-        logoPlacement
-      );
-
-      await axios.post(
-        `${API_BASE}/branding/logo`,
-        formData
-      );
+      await uploadBrandLogo(logoFile, logoPlacement);
+      invalidateMissingBrandLogoCache();
 
       /*
        * Backend upload succeeded.

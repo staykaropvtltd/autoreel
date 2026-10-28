@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { listMusic, musicPreviewUrl, reelFileUrl } from "../api";
+import { downloadAuthenticatedVideo, listMusic, musicPreviewUrl, reelFileUrl } from "../api";
+import AuthenticatedVideoPreview from "./AuthenticatedVideoPreview";
 import type {
   MusicTrack,
   PlannedReelClip,
@@ -279,9 +280,10 @@ export default function EditorScreen({
       {/* VIDEO PREVIEW */}
       <div className="mx-auto w-full max-w-[240px]">
         <div className="aspect-9/16 rounded-xl overflow-hidden border border-[var(--color-border)] bg-black">
-          <video
+          <AuthenticatedVideoPreview
             key={reel.reel_id}
-            src={reelFileUrl(reel.reel_id)}
+            videoUrl={reelFileUrl(reel.reel_id)}
+            title="Reel Preview"
             controls
             className="h-full w-full object-contain"
           />
@@ -904,13 +906,18 @@ export default function EditorScreen({
 
       {/* ACTIONS */}
       <div className="flex justify-center gap-3">
-        <a
-          href={reelFileUrl(reel.reel_id)}
-          download={`reel_${reel.reel_id.slice(0, 8)}.mp4`}
-          className="rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium px-6 py-3 hover:border-[var(--color-brand-primary)] transition-colors"
+        <button
+          type="button"
+          onClick={() =>
+            void downloadAuthenticatedVideo(
+              reelFileUrl(reel.reel_id),
+              `reel_${reel.reel_id.slice(0, 8)}.mp4`
+            )
+          }
+          className="rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium px-6 py-3 hover:border-[var(--color-brand-primary)] transition-colors cursor-pointer"
         >
           Download
-        </a>
+        </button>
 
         <button
           onClick={onGenerateUpdated}

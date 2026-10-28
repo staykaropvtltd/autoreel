@@ -1,7 +1,14 @@
 import subprocess
+import os
 from pathlib import Path
 
 import pytest
+
+# Keep application imports during test collection independent of a developer's
+# production JWT secret or .env load order.
+os.environ.setdefault("JWT_SECRET_KEY", "pytest-only-secret-for-local-test-suite")
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
 
 
 @pytest.fixture

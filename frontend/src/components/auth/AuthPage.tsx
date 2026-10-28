@@ -35,7 +35,7 @@ export default function AuthPage({
   const mode = initialMode;
   const { theme } = useTheme();
   const isLight = theme === "light";
-  const { loginWithGoogle, loginWithGoogleCredential, loginWithEmail, signupWithEmail } = useAuth();
+  const { loginWithGoogleCredential, loginWithEmail, signupWithEmail } = useAuth();
 
   // Clean empty inputs - no hardcoded or testing garbage values
   const [email, setEmail] = useState("");
@@ -52,6 +52,10 @@ export default function AuthPage({
   const [googleClientConfigured, setGoogleClientConfigured] = useState(false);
 
   const googleBtnContainerRef = useRef<HTMLDivElement>(null);
+  const googleLoginRef = useRef(loginWithGoogleCredential);
+  const onSuccessRef = useRef(onSuccess);
+  googleLoginRef.current = loginWithGoogleCredential;
+  onSuccessRef.current = onSuccess;
 
   // Initialize Google Identity Services (GSI)
   useEffect(() => {
@@ -61,10 +65,11 @@ export default function AuthPage({
       return;
     }
 
-    setGoogleClientConfigured(true);
+    setGoogleClientConfigured(false);
 
     loadGoogleGsiScript().then((loaded) => {
       if (!loaded || !window.google?.accounts?.id) return;
+      setGoogleClientConfigured(true);
 
       try {
         window.google.accounts.id.initialize({
@@ -74,10 +79,10 @@ export default function AuthPage({
               setIsLoading(true);
               setError(null);
               try {
-                await loginWithGoogleCredential(response.credential);
+                await googleLoginRef.current(response.credential);
                 setSuccessMessage("Signed in with Google! Opening Studio...");
                 setTimeout(() => {
-                  onSuccess();
+                  onSuccessRef.current();
                 }, 600);
               } catch {
                 setError("Google authentication failed. Please try again.");
@@ -89,10 +94,11 @@ export default function AuthPage({
           cancel_on_tap_outside: true,
         });
 
-        // Optionally render official Google button inside container if available
-        if (googleBtnContainerRef.current) {
-          googleBtnContainerRef.current.innerHTML = "";
-          window.google.accounts.id.renderButton(googleBtnContainerRef.current, {
+        window.setTimeout(() => {
+          const container = googleBtnContainerRef.current;
+          if (!container || !window.google?.accounts?.id) return;
+          container.innerHTML = "";
+          window.google.accounts.id.renderButton(container, {
             type: "standard",
             theme: isLight ? "outline" : "filled_black",
             size: "large",
@@ -101,29 +107,12 @@ export default function AuthPage({
             width: 360,
             logo_alignment: "left",
           });
-        }
+        }, 0);
       } catch (err) {
         console.warn("Google GSI initialization error:", err);
       }
     });
-  }, [isLight, mode, loginWithGoogleCredential, onSuccess]);
-
-  // Click handler for Google Sign In (1-click passthrough)
-  const handleGoogleClick = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      await loginWithGoogle();
-      setSuccessMessage("Signed in with Google! Opening Dashboard...");
-      setTimeout(() => {
-        onSuccess();
-      }, 400);
-    } catch {
-      setError("Failed to sign in. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [isLight, mode]);
 
   // Submit Handler (1-click passthrough for email form)
   const handleSubmit = async (e: FormEvent) => {
@@ -133,17 +122,18 @@ export default function AuthPage({
 
     try {
       if (mode === "signin") {
-        const userEmail = email.trim() || "creator@kaladhar.studio";
-        await loginWithEmail(userEmail, password || "secret123");
+        const userEmail = email.trim();
+        if (!userEmail || !password) throw new Error("Email and password are required.");
+        await loginWithEmail(userEmail, password);
         setSuccessMessage("Signed in successfully! Opening Dashboard...");
         setTimeout(() => {
           onSuccess();
         }, 400);
       } else {
-        const userName = name.trim() || "Boutique Creator";
-        const userEmail = email.trim() || "creator@kaladhar.studio";
-        const boutiqueName = brandName.trim() || "Heritage Silk Studio";
-        await signupWithEmail(userName, userEmail, password || "secret123", boutiqueName);
+        const userName = name.trim();
+        const userEmail = email.trim();
+        if (!userName || !userEmail || !password) throw new Error("Name, email, and password are required.");
+        await signupWithEmail(userName, userEmail, password, brandName.trim());
         setSuccessMessage("Studio account created! Opening Dashboard...");
         setTimeout(() => {
           onSuccess();
@@ -242,8 +232,7 @@ export default function AuthPage({
             ) : (
               <button
                 type="button"
-                onClick={handleGoogleClick}
-                disabled={isLoading}
+                disabled
                 className={`w-full py-2.5 px-4 rounded-xl border font-mono font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-2xs ${
                   isLight
                     ? "bg-white hover:bg-neutral-50 text-neutral-800 border-neutral-300 hover:border-neutral-400"
@@ -269,7 +258,7 @@ export default function AuthPage({
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                   />
                 </svg>
-                <span>Continue with Google</span>
+                <span>Google sign-in is not configured</span>
               </button>
             )}
 

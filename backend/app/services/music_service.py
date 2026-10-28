@@ -4,10 +4,63 @@
 import json
 import uuid
 from pathlib import Path
+import re
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.database_models import MusicTrack
+from app.services import music_storage_service
 
 from app.services.ffmpeg_service import probe
 
 SUPPORTED_MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac"}
+
+
+def custom_track_id(track: MusicTrack) -> str:
+    return f"custom-{track.id}"
+
+
+def get_owned_custom_track(db: Session, user_id: int, track_id: str) -> MusicTrack | None:
+    match = re.fullmatch(r"custom-([1-9][0-9]*)", track_id or "")
+    if not match:
+        return None
+    return db.scalar(select(MusicTrack).where(
+        MusicTrack.id == int(match.group(1)),
+        MusicTrack.owner_user_id == user_id,
+        MusicTrack.is_builtin.is_(False),
+    ))
+
+
+def custom_track_response(track: MusicTrack, preview_url: str | None = None) -> dict:
+    result = {
+        "id": custom_track_id(track),
+        "filename": Path(track.storage_path).name,
+        "display_name": track.title,
+        "duration": track.duration_seconds or 0.0,
+        "format": track.file_format,
+        "is_custom": True,
+    }
+    if preview_url:
+        result["preview_url"] = preview_url
+    return result
+
+
+def materialize_owned_custom_track(db: Session, user_id: int, track_id: str, destination: Path) -> Path:
+    track = get_owned_custom_track(db, user_id, track_id)
+    if track is None:
+        raise ValueError("Selected soundtrack was not found")
+    object_path = music_storage_service.validate_storage_path(track.storage_path, user_id)
+    destination = destination.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{uuid.uuid4().hex}{destination.suffix}.tmp")
+    temporary.write_bytes(music_storage_service.get_object(object_path))
+    temporary.replace(destination)
+    return destination
+
+
+def is_custom_track_id(track_id: str) -> bool:
+    return re.fullmatch(r"custom-[1-9][0-9]*", track_id or "") is not None
 
 _TRACK_NAMESPACE = uuid.UUID("1c0f0f30-7e30-4c87-9b57-30c6cfd8a2c1")
 

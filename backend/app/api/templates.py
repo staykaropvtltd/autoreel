@@ -1,200 +1,182 @@
-import shutil
 import uuid
+from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from PIL import Image
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
+from PIL import Image, UnidentifiedImageError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.core.job_store import create_template_image, delete_template_image_if_unused, get_template_image
+from app.core.auth_dependencies import get_current_user, get_db
+from app.core.job_store import template_is_in_use
 from app.core.security import safe_filename
+from app.models.database_models import EditorProject, Template, User
+from app.services import template_service
 
 router = APIRouter()
-
-# Project root
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-# Where template images will be stored
-TEMPLATE_IMAGES_DIR = _PROJECT_ROOT / "storage" / "templates"
-
-# Allowed image formats
-ALLOWED_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
+MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
+_ALLOWED_FORMATS = {
+    ".jpg": ("JPEG", "image/jpeg"),
+    ".jpeg": ("JPEG", "image/jpeg"),
+    ".png": ("PNG", "image/png"),
+    ".webp": ("WEBP", "image/webp"),
 }
 
-# Maximum template image size: 20 MB
-MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 
-_CHUNK_SIZE = 1024 * 1024
+def _storage_error(exc: template_service.TemplateStorageError) -> HTTPException:
+    status = 404 if isinstance(exc, template_service.TemplateObjectNotFound) else 503
+    return HTTPException(status_code=status, detail="Template storage is unavailable")
 
 
-@router.post("/templates/upload")
+@router.post("/templates/upload", status_code=201)
 async def upload_template_image(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> dict:
-
-    if not file:
-        raise HTTPException(
-            status_code=400,
-            detail="No template image provided",
-        )
-
-    # Sanitize filename
     filename = safe_filename(file.filename or "")
+    if not filename or filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid template image filename")
+    expected = _ALLOWED_FORMATS.get(Path(filename).suffix.lower())
+    if expected is None:
+        raise HTTPException(status_code=400, detail="Allowed template formats are JPG, PNG, and WEBP")
 
-    if not filename:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid template image filename",
-        )
-
-    # Check extension
-    extension = Path(filename).suffix.lower()
-
-    if extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Unsupported template image format: {filename}. "
-                "Allowed formats: JPG, JPEG, PNG, WEBP"
-            ),
-        )
-
-    # Generate unique template ID
-    template_id = str(uuid.uuid4())
-
-    # Create template-specific folder
-    template_dir = TEMPLATE_IMAGES_DIR / template_id
-    template_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # Final file location
-    destination = template_dir / filename
-
-    size = 0
-
+    body = await file.read(MAX_FILE_SIZE_BYTES + 1)
+    if not body:
+        raise HTTPException(status_code=400, detail="Template image is empty")
+    if len(body) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Template image exceeds the 20 MB limit")
     try:
-        with open(destination, "wb") as out_file:
-
-            while chunk := await file.read(_CHUNK_SIZE):
-
-                size += len(chunk)
-
-                # File size validation
-                if size > MAX_FILE_SIZE_BYTES:
-                    out_file.close()
-                    destination.unlink(missing_ok=True)
-
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"Template image too large: {filename}. "
-                            "Maximum size is 20 MB."
-                        ),
-                    )
-
-                out_file.write(chunk)
-
-    except HTTPException:
-        destination.unlink(missing_ok=True)
-        shutil.rmtree(template_dir, ignore_errors=True)
-        raise
-
-    except Exception as exc:
-        destination.unlink(missing_ok=True)
-        shutil.rmtree(template_dir, ignore_errors=True)
-
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to save template image",
-        ) from exc
-
-    # Reject empty files
-    if size == 0:
-        destination.unlink(missing_ok=True)
-        shutil.rmtree(template_dir, ignore_errors=True)
-
-        raise HTTPException(
-            status_code=400,
-            detail=f"Empty template image: {filename}",
-        )
-
-    expected_formats = {
-        ".jpg": "JPEG",
-        ".jpeg": "JPEG",
-        ".png": "PNG",
-        ".webp": "WEBP",
-    }
-    try:
-        with Image.open(destination) as image:
+        with Image.open(BytesIO(body)) as image:
             image_format = image.format
             width, height = image.size
             if width <= 0 or height <= 0 or width * height > 40_000_000:
                 raise ValueError("Image dimensions are outside the supported range")
             image.verify()
-        if image_format != expected_formats[extension]:
+        if image_format != expected[0]:
             raise ValueError("Image contents do not match the filename extension")
-    except Exception as exc:
-        destination.unlink(missing_ok=True)
-        shutil.rmtree(template_dir, ignore_errors=True)
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid template image. Upload a valid JPG, PNG, or WEBP file.",
-        ) from exc
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Upload a valid JPG, PNG, or WEBP image") from exc
 
-    # Store template metadata in the job store
-    create_template_image(
-        template_id=template_id,
-        filename=filename,
-        path=str(destination),
+    template_id = str(uuid.uuid4())
+    storage_path = f"{current_user.id}/{template_id}/{filename}"
+    content_type = expected[1]
+    row = Template(
+        id=template_id,
+        user_id=current_user.id,
+        original_filename=filename,
+        storage_path=storage_path,
+        content_type=content_type,
+        file_size_bytes=len(body),
+        metadata_json={},
     )
+    try:
+        template_service.upload_object(storage_path, body, content_type)
+        db.add(row)
+        db.flush()
+        db.refresh(row)
+        response_data = template_service.template_response(row)
+        db.commit()
+    except template_service.TemplateStorageError as exc:
+        db.rollback()
+        try:
+            template_service.delete_object(storage_path)
+        except template_service.TemplateStorageError:
+            pass
+        raise _storage_error(exc) from exc
+    except Exception as exc:
+        db.rollback()
+        try:
+            template_service.delete_object(storage_path)
+        except template_service.TemplateStorageError:
+            pass
+        raise HTTPException(status_code=503, detail="Could not save template metadata") from exc
+    return {**response_data, "status": "uploaded"}
 
-    return {
-        "template_id": template_id,
-        "status": "uploaded",
-        "filename": filename,
-        "size": size,
-    }
+
+@router.get("/templates")
+def list_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    rows = db.scalars(
+        select(Template).where(Template.user_id == current_user.id).order_by(Template.created_at.desc())
+    ).all()
+    return [template_service.template_response(row) for row in rows]
+
+
+def _owned_template(template_id: str, user: User, db: Session) -> Template:
+    try:
+        normalized_id = str(uuid.UUID(template_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid template ID") from exc
+    template = template_service.get_owned_template(db, normalized_id, user.id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    try:
+        template.storage_path = template_service.validate_storage_path(
+            template.storage_path, user.id, template.id
+        )
+    except template_service.TemplateStorageError as exc:
+        raise HTTPException(status_code=500, detail="Template metadata is invalid") from exc
+    return template
+
+
+@router.get("/templates/{template_id}/preview")
+def preview_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    template = _owned_template(template_id, current_user, db)
+    try:
+        body = template_service.get_object(template.storage_path)
+    except template_service.TemplateStorageError as exc:
+        raise _storage_error(exc) from exc
+    return Response(
+        content=body,
+        media_type=template.content_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.delete("/templates/{template_id}")
-def delete_template(template_id: str) -> dict[str, bool]:
+def delete_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    template = _owned_template(template_id, current_user, db)
+    if template_is_in_use(template.id, current_user.id):
+        raise HTTPException(status_code=409, detail="Template is attached to an active or saved analysis workflow")
+    # Saved Image-to-Reel projects use template UUIDs as durable private image
+    # references. Keep their backing objects until those projects are removed.
+    projects = db.scalars(select(EditorProject).where(EditorProject.user_id == current_user.id)).all()
+    in_editor_project = any(
+        any(slide.get("asset_id") == template.id for slide in (project.project_data or {}).get("slides", []))
+        or (project.project_data or {}).get("overlays", {}).get("logo_asset_id") == template.id
+        for project in projects
+    )
+    if in_editor_project:
+        raise HTTPException(status_code=409, detail="Image is attached to a saved editor project")
+    template_id_value = template.id
+    content_type = template.content_type
     try:
-        safe_template_id = str(uuid.UUID(template_id))
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise HTTPException(status_code=400, detail="Invalid template ID") from exc
-
-    record = get_template_image(safe_template_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Template not found")
-    templates_root = TEMPLATE_IMAGES_DIR.resolve()
-    template_path = Path(record.get("path", "")).resolve()
-    template_dir = template_path.parent
-    if (
-        not template_path.is_relative_to(templates_root)
-        or template_dir.parent != templates_root
-        or template_dir.name != safe_template_id
-    ):
-        raise HTTPException(status_code=400, detail="Invalid template location")
-
-    removed_record, deleted = delete_template_image_if_unused(safe_template_id)
-    if removed_record is None:
-        raise HTTPException(status_code=404, detail="Template not found")
-    if not deleted:
-        raise HTTPException(status_code=409, detail="Template is attached to an active analysis or saved reel workflow")
-
+        body = template_service.get_object(template.storage_path)
+        template_service.delete_object(template.storage_path)
+    except template_service.TemplateStorageError as exc:
+        raise _storage_error(exc) from exc
     try:
-        shutil.rmtree(template_dir, ignore_errors=False)
-    except OSError as exc:
-        create_template_image(
-            safe_template_id,
-            str(removed_record.get("filename", "template")),
-            str(template_path),
-        )
-        raise HTTPException(status_code=500, detail="Could not remove the unused template image") from exc
-
+        db.delete(template)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        try:
+            template_service.upload_object(template.storage_path, body, template.content_type)
+        except template_service.TemplateStorageError:
+            pass
+        raise HTTPException(status_code=503, detail="Could not delete template metadata") from exc
+    cache_path = template_service.render_cache_path(current_user.id, template_id_value, content_type)
+    cache_path.unlink(missing_ok=True)
     return {"deleted": True}

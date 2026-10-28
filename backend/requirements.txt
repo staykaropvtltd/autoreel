@@ -7,3 +7,9 @@ scenedetect==0.7.1
 numpy==2.4.6
 python-multipart==0.0.27
 pillow==12.2.0
+sqlalchemy>=2.0,<3.0
+psycopg[binary]>=3.2,<4.0
+dotenv
+PyJWT[crypto]
+pwdlib[argon2]
+email-validator

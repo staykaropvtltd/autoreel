@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { deleteTemplateImage } from "../api";
+import { deleteTemplateImage, getTemplatePreview, listTemplates, uploadTemplateImage, type TemplateInfo } from "../api";
 import { isSameTemplateImage } from "../templateSelection";
 import type { BrandingInfo } from "../branding";
 import type { ProductInfo } from "../types";
+import { useAuth } from "../context/AuthContext";
 
 interface UploadScreenProps {
   files: File[];
@@ -58,6 +59,7 @@ export default function UploadScreen({
   error,
   onError,
 }: UploadScreenProps) {
+  const { preferences, updatePreferences } = useAuth();
   const [dragOver, setDragOver] =
     useState(false);
 
@@ -75,6 +77,10 @@ const [templatePreview, setTemplatePreview] =
 
 const [templateUploading, setTemplateUploading] =
   useState(false);
+const [savedTemplates, setSavedTemplates] = useState<TemplateInfo[]>([]);
+const [templatesLoading, setTemplatesLoading] = useState(true);
+const [templateLibraryError, setTemplateLibraryError] = useState<string | null>(null);
+const [previewingTemplateId, setPreviewingTemplateId] = useState<string | null>(null);
 
 const templateInputRef =
   useRef<HTMLInputElement>(null);
@@ -82,6 +88,12 @@ const templatePreviewRef = useRef<string | null>(null);
 
 useEffect(() => () => {
   if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
+}, []);
+
+useEffect(() => {
+  const controller = new AbortController();
+  void listTemplates(controller.signal).then((items) => { setSavedTemplates(items); setTemplateLibraryError(null); }).catch(() => { setSavedTemplates([]); setTemplateLibraryError("Saved templates are unavailable."); }).finally(() => setTemplatesLoading(false));
+  return () => controller.abort();
 }, []);
 
 
@@ -134,8 +146,6 @@ useEffect(() => () => {
     return;
   }
 
-  if (templateId) void deleteTemplateImage(templateId).catch(() => {});
-
   setTemplateImage(file);
 
   if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
@@ -143,32 +153,13 @@ useEffect(() => () => {
   templatePreviewRef.current = previewUrl;
   setTemplatePreview(previewUrl);
 
-  const formData = new FormData();
-  formData.append("file", file);
-
   try {
     setTemplateUploading(true);
-
-    const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_URL}/templates/upload`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-
-      throw new Error(
-        errorData?.detail ||
-          "Failed to upload template image."
-      );
-    }
-
-    const data = await response.json();
-
+    const data = await uploadTemplateImage(file);
     setTemplateId(data.template_id);
+    void updatePreferences({ preferred_template_id: data.template_id }).catch(() => {});
+    setSavedTemplates((items) => [data, ...items.filter((item) => item.template_id !== data.template_id)]);
+    setTemplateLibraryError(null);
   } catch {
     URL.revokeObjectURL(previewUrl);
     templatePreviewRef.current = null;
@@ -181,6 +172,46 @@ useEffect(() => () => {
   }
 };
 
+const selectStoredTemplate = async (template: TemplateInfo) => {
+  setPreviewingTemplateId(template.template_id);
+  try {
+    const previewUrl = URL.createObjectURL(await getTemplatePreview(template.template_id));
+    if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
+    templatePreviewRef.current = previewUrl;
+    setTemplatePreview(previewUrl);
+    setTemplateImage(null);
+    setTemplateId(template.template_id);
+    void updatePreferences({ preferred_template_id: template.template_id }).catch(() => {});
+  } catch {
+    onError("Could not load the selected template preview.");
+  } finally {
+    setPreviewingTemplateId(null);
+  }
+};
+
+const removeStoredTemplate = async (template: TemplateInfo) => {
+  try {
+    await deleteTemplateImage(template.template_id);
+    setSavedTemplates((items) => items.filter((item) => item.template_id !== template.template_id));
+    if (templateId === template.template_id) {
+      if (templatePreviewRef.current) URL.revokeObjectURL(templatePreviewRef.current);
+      templatePreviewRef.current = null;
+      setTemplatePreview(null);
+      setTemplateImage(null);
+      setTemplateId(null);
+      void updatePreferences({ preferred_template_id: null }).catch(() => {});
+    }
+  } catch {
+    onError("Could not delete the selected template.");
+  }
+};
+
+useEffect(() => {
+  if (templatesLoading || templateId || !preferences?.preferred_template_id) return;
+  const preferred = savedTemplates.find((item) => item.template_id === preferences.preferred_template_id);
+  if (preferred) void selectStoredTemplate(preferred);
+}, [templatesLoading, templateId, preferences?.preferred_template_id, savedTemplates]);
+
 
   return (
     <div className="max-w-2xl w-full mx-auto px-4 py-10 space-y-8">
@@ -191,11 +222,13 @@ useEffect(() => () => {
 
       <div className="text-center space-y-3">
 
-        <img
-          src={branding.logo_url}
-          alt={branding.name}
-          className="h-16 w-auto object-contain mx-auto"
-        />
+        {branding.logo_url && (
+          <img
+            src={branding.logo_url}
+            alt={branding.name}
+            className="h-16 w-auto object-contain mx-auto"
+          />
+        )}
 
         <div>
 
@@ -422,6 +455,22 @@ useEffect(() => () => {
   )}
 
 </div>
+
+
+      <div className="space-y-2 rounded-xl border border-[var(--color-border)] p-3">
+        <p className="text-xs font-semibold text-[var(--color-text-primary)]">Your saved templates</p>
+        {templatesLoading ? <p className="text-xs opacity-60">Loading templates…</p> : templateLibraryError ? <p role="alert" className="text-xs text-[var(--color-error)]">{templateLibraryError}</p> : savedTemplates.length === 0 ? (
+          <p className="text-xs opacity-60">No saved templates yet.</p>
+        ) : savedTemplates.map((template) => (
+          <div key={template.template_id} className="flex items-center gap-2 text-xs">
+            <span className="min-w-0 flex-1 truncate">{template.filename}</span>
+            <button type="button" onClick={() => void selectStoredTemplate(template)} disabled={previewingTemplateId !== null} className="text-[var(--color-brand-primary)] disabled:opacity-50">
+              {previewingTemplateId === template.template_id ? "Loading…" : templateId === template.template_id ? "Selected" : "Preview / Use"}
+            </button>
+            <button type="button" onClick={() => void removeStoredTemplate(template)} className="text-[var(--color-error)]">Delete</button>
+          </div>
+        ))}
+      </div>
 
 
       {/* =====================================================

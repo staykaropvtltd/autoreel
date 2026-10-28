@@ -26,6 +26,8 @@ from app.services.product_end_card import (
 )
 from app.services.reel_duration import get_template_duration_seconds
 
+_DEFAULT_BRAND_LOGO = object()
+
 from app.schemas.reel import PlannedClip, ReelResult
 from app.schemas.story import (
     BrandingConfig,
@@ -598,6 +600,9 @@ def compose_reel_from_editor_plan(
     fps: int = DEFAULT_FPS,
     music_path: str | Path | None = None,
     template_image_path: str | Path | None = None,
+    brand_config_override=None,
+    brand_logo_path_override: str | Path | None | object = _DEFAULT_BRAND_LOGO,
+    logo_placement_override: str | None = None,
 ) -> ReelResult:
     """Phase 8 entry point: the ReelPlan (clip order, trims, per-clip
     transitions, branding, product overlays) is the single source of truth
@@ -622,8 +627,12 @@ def compose_reel_from_editor_plan(
     # one config file, with no source change and no way for a stale/spoofed
     # request to render the wrong brand. Every other branding field (color,
     # logo position/size, placement, watermark toggle) stays user-editable.
-    brand_config = get_brand_config()
-    brand_logo_path = get_brand_logo_path()
+    brand_config = brand_config_override or get_brand_config()
+    if brand_logo_path_override is _DEFAULT_BRAND_LOGO:
+        brand_logo_path = get_brand_logo_path()
+    else:
+        brand_logo_path = Path(brand_logo_path_override) if brand_logo_path_override else None
+    logo_placement = logo_placement_override or get_logo_placement()
     reel_plan = reel_plan.model_copy(
         update={
             "branding": reel_plan.branding.model_copy(
@@ -792,8 +801,6 @@ def compose_reel_from_editor_plan(
         # The template remains the first 0.5 seconds.
         # The bumper comes immediately after the template.
         # ---------------------------------------------------------------
-
-        logo_placement = get_logo_placement()
 
         if reel_plan.intro_seconds > 0:
             bumper_logo_path = (
@@ -965,8 +972,6 @@ def compose_reel_from_editor_plan(
 
             if candidate_logo.exists():
                 logo_path = candidate_logo
-
-                logo_placement = get_logo_placement()
 
                 if logo_placement == "entire":
                     logo_windows = [

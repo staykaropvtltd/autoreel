@@ -1,8 +1,11 @@
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from app.core.auth_dependencies import get_current_user
+from app.core.job_store import thumbnail_belongs_to_user
+from app.models.database_models import User
 
 router = APIRouter()
 
@@ -11,11 +14,14 @@ THUMBNAIL_CACHE_DIR = _PROJECT_ROOT / "storage" / "temp" / "thumbnails"
 
 
 @router.get("/thumbnails/{key}")
-def get_thumbnail(key: str) -> FileResponse:
+def get_thumbnail(key: str, current_user: User = Depends(get_current_user)) -> FileResponse:
     # Our own cache keys are pure hex hashes - reject anything else outright
     # rather than resolving it against the filesystem.
     if not re.fullmatch(r"^[0-9a-fA-F]{16,64}$", key):
         raise HTTPException(status_code=400, detail="Invalid thumbnail key")
+
+    if not thumbnail_belongs_to_user(key, current_user.id):
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     path = THUMBNAIL_CACHE_DIR / f"{key}.jpg"
     if not path.exists():

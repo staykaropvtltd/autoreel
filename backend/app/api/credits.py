@@ -1,15 +1,11 @@
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
 
-from app.services.credit_service import (
-    get_balance,
-    REEL_GENERATION_COST,
-)
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from app.core.auth_dependencies import get_current_user
+from app.models.database_models import User
+from app.services.credit_service import REEL_GENERATION_COST, get_balance
 
 router = APIRouter(prefix="/credits", tags=["Credits"])
-
-# Temporary user until authentication/database is integrated
-DEMO_USER_ID = "user_demo"
 
 
 class CreditsResponse(BaseModel):
@@ -22,24 +18,15 @@ class ReelCostResponse(BaseModel):
 
 
 @router.get("", response_model=CreditsResponse)
-def get_user_credits():
-    """
-    Get current user's credit balance.
-    Temporary: uses user_demo.
-    """
-    balance = get_balance(DEMO_USER_ID)
-
+def get_user_credits(
+    current_user: User = Depends(get_current_user),
+):
     return {
-        "user_id": DEMO_USER_ID,
-        "credits": balance,
+        "user_id": str(current_user.id),
+        "credits": get_balance(current_user.id),
     }
 
 
 @router.get("/reel-cost", response_model=ReelCostResponse)
 def get_reel_cost():
-    """
-    Return the current cost of generating a reel.
-    """
-    return {
-        "cost": REEL_GENERATION_COST,
-    }
+    return {"cost": REEL_GENERATION_COST}

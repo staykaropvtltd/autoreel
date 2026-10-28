@@ -31,34 +31,6 @@ declare global {
   }
 }
 
-export interface GoogleUserPayload {
-  sub: string;
-  name: string;
-  given_name?: string;
-  family_name?: string;
-  email: string;
-  picture?: string;
-  email_verified?: boolean;
-}
-
-export function parseGoogleJwt(token: string): GoogleUserPayload | null {
-  try {
-    const base64Url = token.split(".")[1];
-    if (!base64Url) return null;
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
-    );
-    return JSON.parse(jsonPayload) as GoogleUserPayload;
-  } catch (err) {
-    console.error("Failed to decode Google JWT credential:", err);
-    return null;
-  }
-}
-
 let gsiScriptLoaded = false;
 let gsiLoadPromise: Promise<boolean> | null = null;
 

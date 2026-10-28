@@ -49,8 +49,16 @@ Frontend will start at `http://localhost:5173`. Open this URL in your browser!
 
 ### 💡 Environment Variables (`.env`)
 - **Backend**: Pre-configured with sensible defaults (`BACKEND_PORT=8000`, `FRONTEND_URL=http://localhost:5173`). No `.env` is needed to run.
-- **Frontend**: Real Google OAuth is optional (`VITE_GOOGLE_CLIENT_ID`). If no `.env` is provided, clicking "Continue with Google" or entering any email/password logs in via **Local Demo Mode** seamlessly.
-- If you wish to customize ports or configure Google Cloud OAuth, simply copy `.env.example` to `.env` in the respective folders.
+- **Authentication**: Email/password sign-in uses backend-issued bearer tokens. Google sign-in requires the same OAuth client ID in `frontend/.env` (`VITE_GOOGLE_CLIENT_ID`) and `backend/.env` (`GOOGLE_CLIENT_ID`); the backend verifies Google's signed ID token before creating its own access token. Google sign-in is disabled until both values are configured. There is no client-only demo login.
+- If you wish to customize ports or configure Google Cloud OAuth, copy `.env.example` to `.env` in the respective folders.
+
+### Private brand logo storage
+
+Per-user logo uploads require these values in `backend/.env` (see `backend/.env.example`): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_BRANDING_BUCKET`. Create the named Supabase Storage bucket as **private**. The backend uses the service-role key only for server-side upload, download, and deletion; do not add it to any `VITE_` frontend variable. Logo object paths are generated under the authenticated user's numeric ID. No public bucket policy is needed because the API proxies logo bytes after authentication.
+
+### Per-user template storage
+
+Template images use a separate private Supabase Storage bucket named `templates` (`SUPABASE_TEMPLATE_BUCKET` in `backend/.env.example`) and the PostgreSQL `templates` table. Apply the additive table with `python -m app.core.init_db` from `backend`. The service-role key remains backend-only. Existing files in `storage/templates` have no reliable owner mapping, so they remain local until mapped to existing users and migrated with `backend/scripts/migrate_local_templates.py`; unmapped templates are not made visible to users.
 
 ---
 
